@@ -1,0 +1,38 @@
+{
+  "name": "verirapport-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop wrapper for the VériRapport setup/parity scripts",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "launch": "cmd /c \"launch-desktop.bat\"",
+    "make-shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File CreateDesktopShortcut.ps1",
+    "make-icon": "python assets/make-icon.py",
+    "dist": "electron-builder --win portable",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.verirapport.desktop",
+    "productName": "VériRapport",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/verirapport.ico",
+      "package.json"
+    ],
+    "portable": {
+      "artifactName": "verirapport-${version}-portable.${ext}"
+    },
+    "win": {
+      "target": ["portable"],
+      "icon": "assets/verirapport.ico"
+    }
+  }
+}

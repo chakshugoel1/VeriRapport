@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Playwright output
+test-results/
+playwright-report/
+playwright-report-main/
+playwright-report-parity/
+
+# Credentials & auth state — NEVER commit these
+.env
+*.env
+.env.*
+**/.auth/
+**/verirapport.user.json
+
+# Test history (local run data)
+test-history/
+
+# Build output
+dist/
+
+# Desktop wrapper artifacts
+app-desktop/node_modules/
+.runtime/
+
+# Service principal credentials
+pbi-service-principal.json
+archive-unused-files/
+
+# Never publish: Excel / Power BI / data files, archives, media, logs, editor + local folders
+*.xlsx
+*.xls
+*.xlsm
+*.pbix
+*.pbit
+*.csv
+*.zip
+*.mp4
+*.log
+.vscode/
+.DS_Store
+reviews/
+uploads/

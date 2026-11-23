@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VériRapport</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --ink: #1b2535;
+      --muted: #66738a;
+      --faint: #97a2b5;
+      --accent: #0f766e;
+      --accent-2: #155e75;
+      --border: #dde4ee;
+      --border-soft: #eaeff6;
+      --danger: #b42318;
+      --warn-bg: #fdf1e0;
+      --warn-ink: #92600a;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --radius: 10px;
+      --radius-sm: 7px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .app {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: var(--space-5) var(--space-4) var(--space-6);
+      display: grid;
+      gap: var(--space-4);
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .app-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-3);
+      padding-bottom: var(--space-2);
+    }
+    .app-header h1 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 600;
+      letter-spacing: 0.1px;
+    }
+    .app-header .tag {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+
+    /* ── Cards ──────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-4);
+    }
+    .card > * + * { margin-top: var(--space-3); }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    .card-title .step {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      flex: none;
+    }
+
+    /* ── Identity fields ────────────────────────────────────────────────── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-4);
+    }
+    .grid-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: var(--space-2);
+    }
+    .fields {
+      display: grid;
+      gap: var(--space-2);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-3);
+      align-items: center;
+    }
+    .field-wrap { min-width: 0; }
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--ink);
+      background: #fff;
+    }
+    input::placeholder { color: var(--faint); }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    hr.divider {
+      border: none;
+      border-top: 1px solid var(--border-soft);
+      margin: var(--space-3) 0 0;
+    }
+
+    .note {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .option-toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-2);
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: var(--space-1);
+    }
+    .option-toggle input[type="checkbox"] {
+      width: auto;
+      margin-top: 2px;
+      accent-color: var(--accent);
+      box-shadow: none;
+    }
+    .option-toggle label {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      display: inline;
+      cursor: pointer;
+    }
+    .option-toggle-lg {
+      align-items: center;
+    }
+    .option-toggle-lg input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      margin-top: 0;
+      cursor: pointer;
+    }
+    .option-toggle-lg label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    /* ── Buttons ────────────────────────────────────────────────────────── */
+    .actions {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+    }
+    button {
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      color: #fff;
+      background: var(--accent);
+      cursor: pointer;
+      transition: opacity 0.12s ease;
+    }
+    button:hover:not(:disabled) { opacity: 0.92; }
+    button.secondary { background: #384454; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button:focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 2px;
+    }
+
+    .status {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-2);
+    }
+
+    #log {
+      background: #0f172a;
+      color: #cdf3ec;
+      border-radius: var(--radius-sm);
+      min-height: 260px;
+      max-height: 420px;
+      overflow: auto;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      padding: var(--space-3);
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    /* ── Filters / discovery results ───────────────────────────────────── */
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .discover-page {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: var(--space-3);
+    }
+    .discover-page + .discover-page { margin-top: var(--space-2); }
+    .discover-page h3 {
+      margin: 0 0 var(--space-2) 0;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .discover-slicer {
+      font-size: 12px;
+      padding: var(--space-2) 0;
+      border-top: 1px solid var(--border-soft);
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-3);
+    }
+    .discover-slicer:first-child { border-top: none; padding-top: 0; }
+    .discover-slicer .name { color: var(--ink); }
+    .discover-slicer .meta { color: var(--muted); text-align: right; }
+
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #e7f5f3;
+      color: var(--accent-2);
+      margin-left: var(--space-2);
+    }
+    .badge.hierarchy { background: var(--warn-bg); color: var(--warn-ink); }
+    .badge.review { background: var(--warn-bg); color: var(--warn-ink); }
+    .badge.fail { background: #fdeceb; color: var(--danger); }
+    .badge.lg {
+      font-size: 12px;
+      padding: 4px 12px;
+      margin-left: 0;
+    }
+
+    /* ── Parity results (in-page summary, see renderParityResults) ──────── */
+    #parityResults .discover-page + .discover-page { margin-top: var(--space-3); }
+    .parity-verdict {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+    .parity-file-links {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      margin-top: var(--space-2);
+    }
+    .parity-file-links button {
+      font-size: 12px;
+      padding: 5px 10px;
+    }
+
+    /* ── Cross-report filter mismatch (split picker) ───────────────────── */
+    .mismatch-banner {
+      background: var(--warn-bg);
+      color: var(--warn-ink);
+      border: 1px solid var(--warn-ink);
+      border-radius: var(--radius-sm);
+      padding: var(--space-3);
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: var(--space-3);
+    }
+    .split-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-4);
+      align-items: start;
+    }
+    .split-column > .section-title {
+      margin-bottom: var(--space-2);
+    }
+    .split-column .discover-page + .discover-page { margin-top: var(--space-2); }
+
+    .placeholder {
+      font-size: 12px;
+      color: var(--faint);
+      padding: var(--space-2) 0;
+    }
+
+
+    /* ── Saved pairs bar ───────────────────────────────────────────────── */
+    .pairbar {
+      display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: var(--space-3) var(--space-4);
+    }
+    .pairbar .pairbar-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .pairbar select { flex: 1; min-width: 220px; padding: 7px 10px; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 13px; font-family: inherit; background: #fff; color: var(--ink); }
+    button.ghost { background: transparent; color: var(--accent-2); border: 1px solid var(--border); }
+    button.ghost:hover:not(:disabled) { background: #f0f6f6; opacity: 1; }
+    button.danger { background: var(--danger); }
+    button.big { font-size: 15px; font-weight: 600; padding: 11px 22px; }
+    button.link { background: none; color: var(--accent-2); padding: 2px 0; font-size: 12px; text-decoration: underline; }
+
+    /* ── Fields ────────────────────────────────────────────────────────── */
+    .row { grid-template-columns: 105px 1fr; }
+    input.invalid { border-color: var(--danger); background: #fffafa; }
+    .hint { font-size: 11px; color: var(--danger); grid-column: 2; margin-top: -4px; }
+    .side-head { display: flex; justify-content: space-between; align-items: baseline; }
+    .linkbox { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
+    .linkbox input { background: #f4fafa; border-style: dashed; }
+    details.more > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); padding: var(--space-1) 0; }
+    details.more[open] > summary { margin-bottom: var(--space-2); }
+    details.card-fold > summary { cursor: pointer; list-style: none; }
+    details.card-fold > summary::-webkit-details-marker { display: none; }
+    details.card-fold > summary .card-title::after { content: "▸"; margin-left: auto; color: var(--faint); }
+    details.card-fold[open] > summary .card-title::after { content: "▾"; }
+    details.card-fold > summary + * { margin-top: var(--space-3); }
+
+    /* ── Run panel ─────────────────────────────────────────────────────── */
+    .runbar { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+    .runbar .spacer { flex: 1; }
+    .errorbanner { display: none; background: #fdeceb; color: var(--danger); border: 1px solid #f3b9b4;
+      border-radius: var(--radius-sm); padding: var(--space-3); font-size: 13px; }
+    .errorbanner.show { display: block; }
+    .errorbanner ul { margin: 4px 0 0 18px; padding: 0; }
+    .progress-wrap { display: none; }
+    .progress-wrap.show { display: block; }
+    .progress { height: 10px; background: #e6edf3; border-radius: 999px; overflow: hidden; }
+    .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+    .progress.indeterminate > div { width: 35%; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+    .progress-meta { display: flex; justify-content: space-between; gap: var(--space-3); font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .progress-meta strong { color: var(--ink); }
+    details.logbox > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
+    details.logbox #log { margin-top: var(--space-2); min-height: 160px; }
+
+    /* ── Recent runs ───────────────────────────────────────────────────── */
+    .recent-item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border-soft); font-size: 12px; }
+    .recent-item:first-of-type { border-top: none; }
+    .recent-item .when { color: var(--muted); width: 130px; flex: none; }
+    .recent-item .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .recent-item button { font-size: 11px; padding: 4px 9px; }
+    .toast { position: fixed; right: 20px; bottom: 20px; background: #0f172a; color: #fff; padding: 10px 14px;
+      border-radius: var(--radius-sm); font-size: 12px; opacity: 0; transform: translateY(8px); transition: all .2s; pointer-events: none; max-width: 360px; }
+    .toast.show { opacity: 1; transform: none; }
+
+    @media (max-width: 820px) {
+      .grid { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 1fr; gap: var(--space-1); }
+      label { white-space: normal; }
+      .split-columns { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+
+    <div class="app-header">
+      <h1>VériRapport</h1>
+      <span class="tag">Automated Power BI Report Testing &amp; Validation</span>
+    </div>
+
+    <div class="pairbar">
+      <span class="pairbar-label">Saved pairs</span>
+      <select id="pairSelect"><option value="">— new pair —</option></select>
+      <button id="btnSavePair" class="ghost" type="button" title="Saves both reports' IDs, pages and options under the Pair name below">Save</button>
+      <button id="btnDeletePair" class="ghost" type="button">Delete</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="step">1</span>Reports to compare</div>
+      <div class="grid">
+        <div>
+          <div class="grid-label">Source · Expected (Import)</div>
+          <div class="linkbox"><input id="source_link" placeholder="Paste the report link from Power BI to fill the IDs" /></div>
+          <div class="fields" id="source-fields"></div>
+                  </div>
+        <div>
+          <div class="side-head">
+            <div class="grid-label">Target · Actual (Direct Lake)</div>
+            <button type="button" class="link" id="btnCopyTenant">Use Source tenant</button>
+          </div>
+          <div class="linkbox"><input id="target_link" placeholder="Paste the report link from Power BI to fill the IDs" /></div>
+          <div class="fields" id="target-fields"></div>
+                  </div>
+      </div>
+      <hr class="divider" />
+      <div class="fields">
+        <div class="row">
+          <div class="field-wrap"><label for="pairName">Pair name</label></div>
+          <input id="pairName" placeholder="Ex- Sales report (names the results folder and the saved pair)" />
+        </div>
+      </div>
+      <div class="option-toggle">
+        <input type="checkbox" id="lenientTextCompare" />
+        <label for="lenientTextCompare">Case-insensitive compare (may hide differences that are only upper/lower case or separators)</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="step">2</span>Run</div>
+      <div class="runbar">
+        <button id="btnParity" class="big" type="button">▶ Run comparison</button>
+        <button id="btnStop" class="danger" type="button" style="display:none">■ Stop</button>
+        <span class="spacer"></span>
+        <button id="btnSetup" class="ghost" type="button" title="Opens a browser to sign in again. Run comparison signs in automatically when no session is saved.">Sign in again</button>
+      </div>
+      <div class="errorbanner" id="errorBanner"></div>
+      <div class="note" id="idleNote">Uses your saved sign-in. If you are not signed in yet, Run comparison will ask you to sign in first.</div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress indeterminate" id="progress"><div></div></div>
+        <div class="progress-meta"><span id="progressText"><strong>Starting…</strong></span><span id="elapsed">0:00</span></div>
+      </div>
+            <div id="parityResults"></div>
+      <details class="logbox"><summary>Technical details</summary><div id="log"></div></details>
+    </div>
+
+    <div class="card" id="recentCard" style="display:none">
+      <div class="card-title">Recent runs</div>
+      <div id="recentRuns"></div>
+    </div>
+
+    <details class="card card-fold">
+      <summary><div class="card-title"><span class="step">+</span>Filters (optional) — pick slicer values to apply on both reports</div></summary>
+      <div class="note">
+        Loading filters only reads the reports. Values you pick below apply on your next run.
+      </div>
+      <div class="option-toggle">
+        <input type="checkbox" id="discoverSkipGlobalCheck" />
+        <label for="discoverSkipGlobalCheck">
+          Skip report-level filter check (faster — only use once you've confirmed this report doesn't use them).
+        </label>
+      </div>
+      <div class="actions">
+        <button id="btnDiscover" class="secondary">Load filters</button>
+      </div>
+      <div class="note" id="discoverAuthNote" style="display:none; color: var(--danger);">
+        Click Run comparison (or Sign in again) first — no saved login session yet. Loading filters can't sign you in itself.
+      </div>
+      <div id="globalFiltersResult">
+        <div class="placeholder">No global filters checked yet.</div>
+      </div>
+      <div id="pageScopeResult">
+        <div class="placeholder">Click Load filters once to load report pages. Selected pages here will be used for all slicers.</div>
+      </div>
+      <div id="discoverResults">
+        <div class="placeholder">No filters loaded yet — click Load filters.</div>
+      </div>
+    </details>
+
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
