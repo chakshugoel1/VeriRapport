@@ -511,7 +511,7 @@ export async function generateEmbedTokenWithSP(
       username: userEmail,
       datasets: [reportDatasetId],
     };
-    if (rolesRequired) {
+    if (rolesRequired && RLS_ROLE) {
       identity['roles'] = [RLS_ROLE];
     }
     bodyObj['identities'] = [identity];

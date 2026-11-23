@@ -14,7 +14,7 @@ twin show the same numbers — and exactly which technology owns each step.
 ┌────────────────────────────────────────────────────────────────────┐
 │                      Desktop Window  (Electron)                      │
 │                Renderer UI  —  index.html / app.js                   │
-│          Enter report identity  •  Run Parity  •  View results       │
+│          Enter report identity • Run comparison • View results      │
 └────────────────────────────────────────────────────────────────────┘
                                   │
                                   │  preload bridge  (contextBridge / IPC)
@@ -45,8 +45,8 @@ twin show the same numbers — and exactly which technology owns each step.
 │ • harness.html     │  │ • REST APIs        │  │ • expected.xlsx    │
 │ • Embed SDK        │  │ • WABI cluster     │  │ • actual.xlsx      │
 │ • report iframe    │  │ • Azure AD token   │  │ • parity-          │
-│ • visual.export    │  │ • RLS identity /   │  │   summary.xlsx     │
-│   Data()  →  CSV   │  │   DynamicRoles     │  │ • parity-          │
+│ • visual.export    │  │ • DAX field check  │  │   summary.xlsx     │
+│   Data()  →  CSV   │  │                    │  │ • parity-          │
 │                    │  │                    │  │   result.json      │
 └────────────────────┘  └────────────────────┘  └────────────────────┘
 ```
@@ -59,7 +59,7 @@ twin show the same numbers — and exactly which technology owns each step.
 
 | # | Owner | What happens |
 |---|-------|--------------|
-| **1** | `Electron` | The user enters report identity and clicks **Run Parity**. The desktop shell spawns the Playwright test process with `npx playwright test` and streams its log back to the window. |
+| **1** | `Electron` | The user enters report identity and clicks **Run comparison**. The desktop shell spawns the Playwright test process with `npx playwright test` and streams its log back to the window. |
 | **2** | `Playwright` | Launches a real **headed Chromium** and loads the saved sign-in session (`verirapport.user.json`) so Power BI treats it as the logged-in user — no password is typed at run time. |
 | **3** | `Node REST` | Node-side helpers call Power BI directly over HTTPS for the **access token, report metadata, backend cluster, and a DAX probe** that confirms each filter field actually exists in *both* datasets — done in Node because the browser is blocked by CORS. |
 | **4** | `Playwright` | Serves `harness.html` into the browser via `page.route` and intercepts the cluster-resolution call, proxying it through Node. The **Power BI embed SDK** then renders the report in an iframe. |
@@ -79,7 +79,7 @@ twin show the same numbers — and exactly which technology owns each step.
 | **Node.js REST helpers** | Server-side HTTPS calls to **Power BI & Azure AD** for tokens, report metadata, cluster routing, and DAX field validation — the calls a browser can't make because of CORS. |
 | **ExcelJS** | Streams the extracted CSV into **.xlsx workbooks** and reads them back for comparison. One sheet per report page. |
 | **Comparison engine** | Pairs pages/visuals across the two reports, **diffs every cell**, classifies severity, and produces both the human summary and the JSON the UI reads. |
-| **Electron shell** | The desktop window: collects report identity, **spawns the test process**, streams its log, reads the result JSON, and opens the output files. *(The layer currently slated for redesign.)* |
+| **Electron shell** | The desktop window: collects report identity, **spawns the test process**, streams its log, reads the result JSON, and opens the output files. |
 
 ---
 

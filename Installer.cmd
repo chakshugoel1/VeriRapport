@@ -16,7 +16,7 @@ rem  bootstrap-install.ps1 directly instead and run it with:
 rem    powershell -NoProfile -ExecutionPolicy Bypass -File bootstrap-install.ps1
 rem ============================================================================
 
-set "SCRIPT_URL=https://raw.githubusercontent.com/chakshugoel173/Playwirght_testing_PowerBI/main/bootstrap-install.ps1"
+set "SCRIPT_URL=https://raw.githubusercontent.com/chakshugoel1/VeriRapport/main/bootstrap-install.ps1"
 set "TEMP_SCRIPT=%TEMP%\verirapport-bootstrap-install.ps1"
 
 echo ===============================================================

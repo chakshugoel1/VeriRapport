@@ -16,7 +16,7 @@
  *    npm run parity:target    → export ONLY target, compare against existing expected
  *
  * Select a pair (when more than one is configured):
- *    PAIR=PowerBI-Report npm run parity
+ *    PAIR="Power BI Report" npm run parity
  */
 
 import { test, expect } from '@playwright/test';

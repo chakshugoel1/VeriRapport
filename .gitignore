@@ -11,6 +11,7 @@ playwright-report-parity/
 .env
 *.env
 .env.*
+!.env.template
 **/.auth/
 **/verirapport.user.json
 

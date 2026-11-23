@@ -22,7 +22,7 @@
  *    npm run parity:target          # export ONLY the Direct-Lake target → actual, then compare
  *
  * Choose which pair is active with the PAIR env var (defaults to the first):
- *    PAIR=PowerBI-Report npm run parity
+ *    PAIR="Power BI Report" npm run parity
  *
  * Nothing else in the codebase needs editing to point at a new report pair —
  * the identifiers set here are applied to the existing export pipeline at runtime.
@@ -104,8 +104,8 @@ export const PAIRS: ReportPair[] = [
       datasetId: '',
       rlsRole:   '',
     },
-     pages: ['CXO'],   // optional: only these tabs
-    // pageMap: { 'DU Head': 'DU-Head' }, // optional: renamed tabs
+    // pages: ['Overview'],                 // optional: only these tabs (default: all)
+    // pageMap: { 'Old Name': 'New Name' }, // optional: renamed tabs (source → target)
   },
 ];
 

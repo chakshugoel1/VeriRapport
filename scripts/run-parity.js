@@ -12,8 +12,8 @@
  *   npm run parity:target    → MODE=target
  *
  * Select a configured pair:
- *   PowerShell:  $env:PAIR='PowerBI-Report'; npm run parity
- *   bash:        PAIR=PowerBI-Report npm run parity
+ *   PowerShell:  $env:PAIR='Power BI Report'; npm run parity
+ *   bash:        PAIR='Power BI Report' npm run parity
  */
 
 const { spawnSync } = require('child_process');

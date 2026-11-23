@@ -113,7 +113,7 @@ if (Test-Path -LiteralPath $envFile) {
     Write-Ok '.env created from provided credentials'
   } else {
     Copy-TemplateIfMissing -DestinationPath $envFile -TemplatePath $envTemplate | Out-Null
-    Write-Info '.env template created. You can also enter credentials later from the desktop app.'
+    Write-Info ".env template created. Add E2E_USERNAME / E2E_PASSWORD to $envFile before signing in."
   }
 } else {
   Write-Warn '.env missing'
@@ -156,7 +156,7 @@ if (Test-Path -LiteralPath $authFile) {
   # or via -RunAuthSetup) rather than have it fire unannounced during install.
   Write-Ok 'Credentials saved. Sign in from the desktop app when you are ready (or pass -RunAuthSetup here).'
 } else {
-  Write-Info 'No credentials yet - enter them from the desktop app when you open it.'
+  Write-Info "No credentials yet - add E2E_USERNAME / E2E_PASSWORD to $envFile, then sign in from the desktop app."
 }
 
 $hasAuthSession = Test-Path -LiteralPath $authFile

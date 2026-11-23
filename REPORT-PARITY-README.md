@@ -19,9 +19,9 @@ Two ways to do this — pick whichever fits how you're running things.
 
 Open the desktop app (`app-desktop/`, or the shortcut the installer created)
 and fill in the Source and Target report's Tenant ID / Group ID / Report ID /
-Dataset ID directly in the UI. This overrides the hardcoded pair for that run
-only — nothing to edit, nothing to save permanently. See the main
-`README.md`'s "Desktop GUI" section for the full flow.
+Dataset ID directly in the UI (or paste a report link). This overrides the pair
+in `comparison-config.helpers.ts` for that run only — nothing to edit, nothing to save permanently. See the main
+`README.md`'s "Desktop app" section for the full flow.
 
 ### Option B — Edit the code (a permanent, version-controlled default)
 
@@ -31,20 +31,18 @@ Open **`tests/helpers/comparison-config.helpers.ts`** and fill in both the
 ```ts
 export const PAIRS: ReportPair[] = [
   {
-    name: 'PowerBI-Report',
+    name: 'Power BI Report',
     source: {   // Import mode — EXPECTED
       tenantId:  '...',
       groupId:   '...',
       reportId:  '...',
       datasetId: '...',
-      rlsRole:   'DynamicRoles',
     },
     target: {   // Direct Lake — ACTUAL
       tenantId:  '...',
       groupId:   '...',
       reportId:  '...',
       datasetId: '...',
-      rlsRole:   'DynamicRoles',
     },
   },
 ];
@@ -54,16 +52,17 @@ export const PAIRS: ReportPair[] = [
 `app.powerbi.com/groups/<groupId>/reports/<reportId>/...`. The `datasetId` is on
 the report's *Settings → Semantic model* page (or via the workspace's dataset list).
 
-If you leave any field blank (or as the literal `REPLACE_WITH_...` placeholder
+The shipped file has all IDs blank. If you leave any field blank (or as the literal `REPLACE_WITH_...` placeholder
 text), the test **fails immediately with a clear message** before opening a
 browser — it will not silently compare the wrong thing.
 
 ### Optional settings (code only)
 
 ```ts
-pages: ['Employee', 'Manager'],       // only validate these tabs (default: ALL tabs)
-pageMap: { 'DU Head': 'DU-Head' },    // only if a tab was RENAMED during migration
+pages: ['Overview', 'Details'],      // only validate these tabs (default: ALL tabs)
+pageMap: { 'Old Name': 'New Name' },  // only if a tab was RENAMED during migration
                                       // (source name → target name)
+// inside source / target: rlsRole: 'RoleName' — only if the dataset requires an RLS role
 ```
 
 By default all pages are auto-discovered and matched by name — no config needed
@@ -86,7 +85,7 @@ baseline exists yet, it fails with an instruction to run `parity:source` first.
 Multiple pairs configured? Select one:
 
 ```powershell
-$env:PAIR='PowerBI-Report'; npm run parity     # PowerShell
+$env:PAIR='Power BI Report'; npm run parity    # PowerShell (must match the pair's name)
 ```
 
 ---
@@ -100,8 +99,10 @@ Everything lands in **`playwright-report-parity/<PairName>/`**:
 | `expected.xlsx` | Source (Import mode) data — one sheet per report page |
 | `actual.xlsx` | Target (Direct Lake) data — one sheet per report page |
 | `parity-summary.xlsx` | **The deliverable.** Verdict + per-page diffs + sample differing rows |
+| `parity-result.json` | Machine-readable result (read by the desktop app) |
+| `discovered-slicers.json` | Filters found by Load filters / `discover:slicers` |
 
-`parity-summary.xlsx` has four sheets:
+`parity-summary.xlsx` has five sheets:
 
 - **Parity Summary** — PASS/FAIL verdict, which reports were compared, counts
 - **Page Comparison** — per page: rows in source, rows in target, rows only on
@@ -109,7 +110,8 @@ Everything lands in **`playwright-report-parity/<PairName>/`**:
 - **Visual Comparison** — one row per Power BI visual, with an exact status
   (identical / header text differs / duplicated / values differ / missing /
   ambiguous)
-- **Differences** — the actual differing rows, so you can see *what* changed
+- **Differences** — rows that exist on one side only
+- **Changed Values** — which cell changed, from what to what (with % change)
 
 **The test does NOT fail (does not go red) just because the data differs.**
 A data mismatch is a normal, expected finding — it's recorded as a
@@ -133,5 +135,5 @@ CI gate), set `FAIL_ON_PARITY_DIFF=1` before running.
 - **The existing main-run flow is unchanged.** `npm run main:run` behaves
   independently — the parity feature only activates on the `parity*` scripts.
 - Auth is shared with the existing setup. If the token can't be found, run
-  `npm run test:setup` first (or use the desktop app, which does this for you
-  automatically if no session is found when you click Run Parity).
+  `npm run test:setup` first (or use the desktop app, which signs in for you
+  automatically if no session is found when you click Run comparison).

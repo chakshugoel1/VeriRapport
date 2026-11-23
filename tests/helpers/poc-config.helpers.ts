@@ -13,7 +13,8 @@ export interface PocConfig {
 
 // No tenant/workspace/report/dataset IDs are baked in: they come from the app's
 // fields (applyReportIdentity) or from env vars / the .env file.
-const DEFAULT_RLS_ROLE = 'DynamicRoles';
+// No RLS role by default; set PBI_RLS_ROLE only if the dataset requires one.
+const DEFAULT_RLS_ROLE = '';
 
 const SECRETS_DIR = path.join(process.env['USERPROFILE'] ?? process.env['HOME'] ?? '', 'Power_BI_report_validation_credentials');
 const ENV_FILE = path.join(SECRETS_DIR, '.env');
@@ -73,8 +74,7 @@ export function getPocConfig(): PocConfig {
   const rlsRole = firstNonEmpty(
     process.env['PBI_RLS_ROLE'],
     process.env['PowerBIRLSRole'],
-    DEFAULT_RLS_ROLE,
-  ) as string;
+  ) ?? DEFAULT_RLS_ROLE;
 
   return {
     tenantId,
