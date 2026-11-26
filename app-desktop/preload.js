@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('verirapportDesktop', {
   saveState: (state) => ipcRenderer.invoke('state-save', state),
   cancelRun: () => ipcRenderer.invoke('cancel-run'),
   openOutputFolder: (p) => ipcRenderer.invoke('open-output-folder', p),
+  pickMappingFile: () => ipcRenderer.invoke('pick-mapping-file'),
   openOutputFile: (filePath) => ipcRenderer.invoke('open-output-file', filePath),
   showOutputInFolder: (filePath) => ipcRenderer.invoke('show-output-in-folder', filePath),
   onLog: (handler) => {

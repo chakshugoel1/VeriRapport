@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -188,6 +188,8 @@ function writeRuntimeConfig(config) {
     source: config.source,
     target: config.target,
     pages: config.pages,
+    // Optional KPI mapping file (old report -> redesigned report). Empty/absent = normal comparison.
+    mappingFile: config.mappingFile || undefined,
   };
   fs.writeFileSync(RUNTIME_FILE, JSON.stringify(payload, null, 2), 'utf8');
   return RUNTIME_FILE;
@@ -625,6 +627,19 @@ function confineToOutputRoot(filePath) {
   }
   return resolved;
 }
+
+// Lets the user choose the optional KPI mapping Excel file. The file is only
+// READ by the test run; nothing is copied or uploaded.
+ipcMain.handle('pick-mapping-file', async () => {
+  const win = BrowserWindow.getFocusedWindow() || undefined;
+  const res = await dialog.showOpenDialog(win, {
+    title: 'Choose the KPI mapping file',
+    properties: ['openFile'],
+    filters: [{ name: 'Excel workbook', extensions: ['xlsx', 'xlsm'] }],
+  });
+  if (res.canceled || !res.filePaths || res.filePaths.length === 0) return { ok: false };
+  return { ok: true, path: res.filePaths[0] };
+});
 
 ipcMain.handle('open-output-file', async (_event, filePath) => {
   try {

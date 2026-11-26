@@ -97,6 +97,50 @@ export interface PageExportResult {
   pageInternalName: string;
   visualsWithData:  number;
   totalRows:        number;
+  /** The visuals written to this sheet, in sheet order (block k of the sheet
+   *  = visuals[k]). Used by the mapping-file comparison to find a visual by
+   *  its Power BI visual ID; ignored by the normal flow. */
+  visuals?:         VisualIndexEntry[];
+}
+
+/** One data visual as written to a sheet (see PageExportResult.visuals). */
+export interface VisualIndexEntry {
+  /** Power BI visual name (the "visual ID" in a KPI mapping file). */
+  visualName: string;
+  /** Title exactly as written in the sheet's [VISUAL] marker row. */
+  title:      string;
+  type:       string;
+  rows:       number;
+}
+
+/** Sidecar file next to an exported workbook: which visual ID is which block. */
+export interface VisualIndexFile {
+  version: 1;
+  sheets:  Array<{
+    sheetName: string; pageDisplayName: string; pageInternalName: string;
+    visuals: VisualIndexEntry[];
+  }>;
+}
+
+/** Path of the sidecar index for an exported workbook (expected.xlsx -> expected.visual-index.json). */
+export function visualIndexPathFor(xlsxPath: string): string {
+  return xlsxPath.replace(/\.xlsx$/i, '') + '.visual-index.json';
+}
+
+/** Writes the sidecar index. Best-effort by design: the normal flow never reads it. */
+export function writeVisualIndex(result: ReportExportResult): void {
+  try {
+    const body: VisualIndexFile = {
+      version: 1,
+      sheets: result.exported.map(e => ({
+        sheetName: e.sheetName, pageDisplayName: e.pageDisplayName,
+        pageInternalName: e.pageInternalName, visuals: e.visuals ?? [],
+      })),
+    };
+    fs.writeFileSync(visualIndexPathFor(result.outPath), JSON.stringify(body, null, 2), 'utf8');
+  } catch (e) {
+    console.warn(`[export] Could not write visual index (non-fatal, only needed for mapping-file mode): ${describeError(e)}`);
+  }
 }
 
 export interface ReportExportResult {
@@ -348,13 +392,13 @@ export async function exportReportToWorkbook(
       recordTiming(label, `page:${rp.displayName}:exportData`, sumMs);
     }
     const tWrite = Date.now();
-    const { visualsWithData, totalRows } = writeVisualsToSheet(ws, visuals);
+    const { visualsWithData, totalRows, index } = writeVisualsToSheet(ws, visuals);
     ws.commit(); // flush this page's rows to disk now — don't hold them for the rest of the run
     recordTiming(label, `page:${rp.displayName}:writeSheet`, Date.now() - tWrite);
 
     exported.push({
       sheetName: wsName, pageDisplayName: rp.displayName, pageInternalName: rp.name,
-      visualsWithData, totalRows,
+      visualsWithData, totalRows, visuals: index,
     });
   }
 
@@ -398,7 +442,7 @@ const WIDTH_PADDING = 2;
 export function writeVisualsToSheet(
   ws: ExcelJS.Worksheet,
   visuals: VisualExport[],
-): { visualsWithData: number; totalRows: number } {
+): { visualsWithData: number; totalRows: number; index: VisualIndexEntry[] } {
   // Keep only data-bearing visuals, sorted for stable, aligned output.
   const dataVisuals = visuals
     .filter(v => !SKIP_TYPES.has(v.visualType) && v.rowCount > 0 && v.headers.length > 0)
@@ -411,7 +455,7 @@ export function writeVisualsToSheet(
     ws.getColumn(1).width = 24;
     const row = ws.addRow(['[NO DATA VISUALS]']);
     row.commit();
-    return { visualsWithData: 0, totalRows: 0 };
+    return { visualsWithData: 0, totalRows: 0, index: [] };
   }
 
   // ── PASS 1: compute per-column widths from data already in memory.
@@ -474,7 +518,12 @@ export function writeVisualsToSheet(
     spacer.commit();
   }
 
-  return { visualsWithData: dataVisuals.length, totalRows };
+  return {
+    visualsWithData: dataVisuals.length, totalRows,
+    index: dataVisuals.map(v => ({
+      visualName: v.visualName, title: v.visualTitle || v.visualName, type: v.visualType, rows: v.rowCount,
+    })),
+  };
 }
 
 // ── Parity summary writer ─────────────────────────────────────────────────────
@@ -496,6 +545,8 @@ export interface ParitySummaryMeta {
    * result, pass OR fail.
    */
   comparisonCaveats?: string[];
+  /** Mapping-file mode: path/name of the KPI mapping file that drove the comparison. */
+  mappingFile?: string;
   /** Full page-set alignment between the two reports (informational). */
   pageAlignment?: { onlyInSource: string[]; onlyInTarget: string[]; inBothCount: number };
 }
@@ -530,6 +581,8 @@ const VISUAL_STATUS_LABEL: Record<VisualBlockDiff['status'], string> = {
   'only-in-expected':   '⚠️ Only in Source',
   'only-in-actual':     '🆕 Only in Target',
   'ambiguous':          '❓ Ambiguous — needs manual check',
+  'expected-removal':   '🗑️ Removed on purpose (per mapping file)',
+  'not-verified':       '🔍 Not verified — please check by eye',
 };
 
 const VISUAL_STATUS_FILL: Record<VisualBlockDiff['status'], ExcelJS.Fill> = {
@@ -540,11 +593,13 @@ const VISUAL_STATUS_FILL: Record<VisualBlockDiff['status'], ExcelJS.Fill> = {
   'only-in-expected':  E_MISS,
   'only-in-actual':    E_WARN,
   'ambiguous':         E_WARN,
+  'expected-removal':  E_INFO,
+  'not-verified':      E_WARN,
 };
 
 /** True when a visual's status means "the data matches" (part of the relaxed gate). */
 function visualDataMatches(status: VisualBlockDiff['status']): boolean {
-  return status === 'identical' || status === 'header-diff' || status === 'duplicate-count';
+  return status === 'identical' || status === 'header-diff' || status === 'duplicate-count' || status === 'expected-removal' || status === 'not-verified';
 }
 
 // ── Severity tiers ───────────────────────────────────────────────────────────
@@ -564,6 +619,8 @@ const VISUAL_SEVERITY: Record<VisualBlockDiff['status'], Severity> = {
   'identical':        'safe',
   'header-diff':      'safe',     // values match — only the label text changed
   'duplicate-count':  'safe',     // values match — only the copy count changed
+  'not-verified':     'review',   // mapping file only: could not be checked, not a failure
+  'expected-removal': 'safe',     // mapping file says it was dropped on purpose — just listed
   'ambiguous':        'review',   // couldn't be auto-verified either way
   'only-in-expected': 'critical', // a visual genuinely vanished
   'only-in-actual':   'critical', // a visual genuinely appeared
@@ -600,7 +657,7 @@ const SEVERITY_CELL_FILL: Record<Severity, ExcelJS.Fill> = {
 // still tell "renamed" from "untouched" without reading the Status column —
 // this only affects the ROW tint, never the severity bucket itself.
 function rowFillFor(status: VisualBlockDiff['status']): ExcelJS.Fill {
-  if (status === 'header-diff' || status === 'duplicate-count') return E_INFO_LT;
+  if (status === 'header-diff' || status === 'duplicate-count' || status === 'expected-removal') return E_INFO_LT;
   return SEVERITY_ROW_FILL[VISUAL_SEVERITY[status]];
 }
 
@@ -626,6 +683,11 @@ export interface AnalysisStats {
   critical: number;
   /** Pages that matched byte-for-byte at the fast check (no visual detail). */
   fastPassPages: number;
+  /** Mapping-file mode: visuals the mapping file says were dropped on purpose
+   *  (listed, never counted as a difference). Absent/0 in the normal flow. */
+  expectedRemovals?: number;
+  /** Mapping-file mode: visuals that could not be located in the new report to check. */
+  notVerified?: number;
 }
 
 export function computeAnalysisStats(diff: WorkbookDiffSummary): AnalysisStats {
@@ -641,8 +703,15 @@ export function computeAnalysisStats(diff: WorkbookDiffSummary): AnalysisStats {
     for (const v of s.visuals) {
       stats.totalVisuals++;
       switch (VISUAL_SEVERITY[v.status]) {
-        case 'safe':     if (v.status === 'identical') stats.identicalVisuals++; else stats.cosmeticOnly++; break;
-        case 'review':   stats.needsReview++; break;
+        case 'safe':
+          if (v.status === 'identical') stats.identicalVisuals++;
+          else if (v.status === 'expected-removal') stats.expectedRemovals = (stats.expectedRemovals ?? 0) + 1;
+          else stats.cosmeticOnly++;
+          break;
+        case 'review':
+          stats.needsReview++;
+          if (v.status === 'not-verified') stats.notVerified = (stats.notVerified ?? 0) + 1;
+          break;
         case 'critical': stats.critical++; break;
       }
     }
@@ -667,7 +736,7 @@ export function buildAnalysisNarrative(
     );
   }
 
-  const diffVisuals = stats.totalVisuals - stats.identicalVisuals;
+  const diffVisuals = stats.totalVisuals - stats.identicalVisuals - (stats.expectedRemovals ?? 0);
 
   if (stats.totalVisuals === 0) {
     lines.push(stats.fastPassPages > 0
@@ -692,6 +761,13 @@ export function buildAnalysisNarrative(
         ? `Bottom line: ${stats.critical} genuine issue(s) need review before sign-off${stats.cosmeticOnly > 0 ? ` — the other ${stats.cosmeticOnly} are just renamed labels and can be ignored` : ''}.`
         : `Bottom line: nothing critical, but ${stats.needsReview} visual(s) need a quick manual check (see "❓ Needs manual review" rows on Visual Comparison).`);
     }
+  }
+
+  if ((stats.notVerified ?? 0) > 0) {
+    lines.push(`${stats.notVerified} visual(s) could not be verified: the mapping file says they exist in the new report, but their values could not be located there to compare (typically old cards merged into a multi-value card). They are NOT counted as failures. Check them by eye (status "Not verified" on Visual Comparison).`);
+  }
+  if ((stats.expectedRemovals ?? 0) > 0) {
+    lines.push(`${stats.expectedRemovals} visual(s) were removed on purpose according to the mapping file. They are listed on Visual Comparison (status "Removed on purpose") and do not count as differences.`);
   }
 
   if (pagesMissing > 0) {
@@ -922,6 +998,14 @@ export async function writeParitySummary(
     ['Structural Visual Diffs — missing/duplicated/ambiguous (see Visual Comparison)', String(totalStructuralDiffs)],
     ['Header diffs count as failure?', TREAT_HEADER_DIFF_AS_FAILURE ? 'Yes' : 'No — see TREAT_HEADER_DIFF_AS_FAILURE'],
   ];
+  if (meta.mappingFile) {
+    rows.push(['Mapping file', meta.mappingFile]);
+    const byType = new Map<string, number>();
+    for (const sh of diff.sheets) for (const v of sh.visuals) {
+      if (v.mapping) byType.set(v.mapping.changeLabel, (byType.get(v.mapping.changeLabel) ?? 0) + 1);
+    }
+    for (const [label, n] of byType) rows.push([`  Mapped visuals — ${label}`, String(n)]);
+  }
   if (meta.pageAlignment) {
     rows.push(['Report Pages In Both Reports', String(meta.pageAlignment.inBothCount)]);
     rows.push(['Report Pages Only In Source Report', meta.pageAlignment.onlyInSource.join(', ') || '(none)']);
@@ -1029,12 +1113,22 @@ export async function writeParitySummary(
   // kind. Within each page the worst problems are listed first.
   const SEV_RANK: Record<Severity, number> = { critical: 0, review: 1, safe: 2 };
   const visWs = wb.addWorksheet('Visual Comparison');
+  // Mapping-file mode adds four columns right after Status. Absent otherwise,
+  // so the sheet is identical to before for a normal (no mapping) run.
+  const hasMapping = pagesOrdered.some(s => s.visuals.some(v => v.mapping));
+  const mappingCols = hasMapping ? [
+    { header: 'Change type',    key: 'changeType', width: 30 },
+    { header: 'Old visual ID',  key: 'oldId',      width: 24 },
+    { header: 'New visual ID',  key: 'newId',      width: 24 },
+    { header: 'Why changed (mapping file)', key: 'mapReason', width: 50 },
+  ] : [];
   visWs.columns = [
     { header: 'Page (Sheet)',   key: 'sheet',   width: 24 },
     { header: 'Visual Title',   key: 'title',   width: 34 },
     { header: 'Type',           key: 'type',    width: 18 },
     { header: 'Severity',       key: 'severity',width: 26 },
     { header: 'Status',         key: 'status',  width: 30 },
+    ...mappingCols,
     { header: 'Rows Source',    key: 'rowsE',   width: 10 },
     { header: 'Rows Target',    key: 'rowsA',   width: 10 },
     { header: 'Rows Δ',         key: 'rowsD',   width: 9 },
@@ -1061,6 +1155,10 @@ export async function writeParitySummary(
         type: v.type,
         severity: SEVERITY_LABEL[severity],
         status: VISUAL_STATUS_LABEL[v.status],
+        changeType: v.mapping?.changeLabel ?? '',
+        oldId: v.mapping?.oldVisualId ?? '',
+        newId: v.mapping?.newVisualId ?? '',
+        mapReason: v.mapping ? [v.mapping.reason, v.mapping.fieldsDropped ? `Fields dropped: ${v.mapping.fieldsDropped}` : ''].filter(Boolean).join(' — ') : '',
         rowsE: v.rowsExpected,
         rowsA: v.rowsActual,
         rowsD: v.rowsActual - v.rowsExpected,

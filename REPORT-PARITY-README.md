@@ -123,6 +123,28 @@ CI gate), set `FAIL_ON_PARITY_DIFF=1` before running.
 
 ---
 
+## Comparing with a KPI mapping file (redesigned reports)
+
+Use this when the new report was **redesigned** (for example by ReportIQ), so visual types, titles and layout changed. A KPI mapping Excel file tells VériRapport which old visual became which new one.
+
+- **Desktop app:** in step 1, click **Browse…** next to *Mapping file (optional)* and pick the Excel file. Click **Clear** to go back to the normal comparison.
+- **Config / CLI:** set `mappingFile: 'C:/path/to/mapping.xlsx'` on the pair in `tests/helpers/comparison-config.helpers.ts`.
+
+What the file needs (column names may vary: they are found by meaning, ignoring case, spaces and symbols): old page, old page ID, **old visual ID**, **match type**, new page, new page ID, new visual ID, old/new fields, fields dropped, reason. Extra columns are ignored. If your file uses other header names, list them in a settings JSON (`{"columns": {"oldVisualId": ["My ID header"]}}`) and point `mappingSettingsFile` (or `PBI_MAPPING_SETTINGS`) at it.
+
+How each match type is handled:
+
+| Match type | What happens |
+|---|---|
+| Same KPI | Values compared directly. Field names that differ only in spelling (`Project Number` vs `PROJECT_NUMBER`) count as the same. |
+| Same table, columns changed | Only the columns both reports have are compared. Removed columns are listed. |
+| Merged into a multi-value card | The old card's value is looked up inside the new card and compared. If it cannot be found, the card is **Not verified** (listed for a look, not a failure). |
+| No same KPI / dropped | Listed as **Removed on purpose**, with the reason. Not a failure. |
+
+The *Visual Comparison* sheet gets four extra columns: Change type, Old visual ID, New visual ID, Why changed. Filters written against the old report are translated to the new field and page names where the mapping shows the rename.
+
+Notes: each export now also writes a small `*.visual-index.json` file next to `expected.xlsx` / `actual.xlsx` (which visual ID is which block). Mapping mode needs it, so re-export the source once after updating. Without a mapping file, nothing changes.
+
 ## Notes
 
 - **Comparison is order-independent.** Rows and visuals are matched as a

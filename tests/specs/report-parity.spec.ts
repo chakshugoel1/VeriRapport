@@ -37,10 +37,17 @@ import {
   summarizeForUi,
   diffPageSets,
   pageNameKey,
+  writeVisualIndex,
   type ReportExportResult,
 } from '../helpers/report-export.helpers';
 import { timed, formatTimingSummary, writeTimingReport } from '../helpers/timing.helpers';
 import { compareWorkbooks } from '../helpers/excel-compare.helpers';
+import {
+  loadMappingFile, loadMappingSettings, countByMatchType, mappedPageNames, MATCH_TYPE_LABEL,
+  buildFieldTranslation, buildPageNameTranslation, translateScenarioForMapping,
+  type MappingFile,
+} from '../helpers/mapping-file.helpers';
+import { compareWorkbooksWithMapping } from '../helpers/mapped-compare.helpers';
 import { pollForUserToken, validateDatasetField } from '../helpers/pbi-api.helpers';
 import {
   getScenarios,
@@ -74,7 +81,23 @@ const RUN_TARGET = MODE === 'both' || MODE === 'target';
  * misconfiguration fails in milliseconds with an actionable message instead of
  * after a slow browser start + sign-in.
  */
-test.beforeAll(() => {
+// Optional KPI mapping file (old report -> redesigned report). Loaded and
+// checked BEFORE any browser starts, so a wrong file fails in seconds. Unset =
+// the normal comparison, exactly as before.
+let MAPPING: MappingFile | null = null;
+
+test.beforeAll(async () => {
+  if (PAIR.mappingFile) {
+    MAPPING = await loadMappingFile(PAIR.mappingFile, loadMappingSettings(PAIR.mappingSettingsFile ?? process.env['PBI_MAPPING_SETTINGS']));
+    const c = countByMatchType(MAPPING);
+    console.log(
+      `[mapping] ${path.basename(PAIR.mappingFile)} (sheet "${MAPPING.sheetName}"): ${MAPPING.rows.length} old visual(s) - ` +
+      `${c.same} ${MATCH_TYPE_LABEL.same}, ${c.merged} ${MATCH_TYPE_LABEL.merged}, ` +
+      `${c['columns-changed']} ${MATCH_TYPE_LABEL['columns-changed']}, ${c.dropped} ${MATCH_TYPE_LABEL.dropped}` +
+      (c.unknown ? `, ${c.unknown} unrecognised` : ''),
+    );
+    for (const w of MAPPING.warnings) console.warn(`[mapping] ${w}`);
+  }
   if (RUN_SOURCE && !identityIsConfigured(PAIR.source)) {
     throw new Error(
       `\n\n  CONFIG ERROR — pair "${PAIR.name}": the SOURCE (Import mode) report is not configured.\n` +
@@ -171,14 +194,33 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
   for (const [src, tgt] of Object.entries(pageMap)) inverseMap[tgt] = src;
 
   const sourcePagesFilter = pair.pages;                       // may be undefined → all pages
-  const targetPagesFilter = pair.pages?.map(p => pageMap[p] ?? p);
+  let targetPagesFilter = pair.pages?.map(p => pageMap[p] ?? p);
+  if (MAPPING) {
+    // Mapping-file mode: the mapping says which new page each old page became,
+    // so the target's pages come from the mapping (not from pageMap/same name),
+    // and target sheets keep their own names (pairing is by visual ID).
+    const wanted = pair.pages?.map(p => p.trim().toLowerCase());
+    const newNames = new Set<string>();
+    for (const r of MAPPING.rows) {
+      if (!r.newPage) continue;
+      if (!wanted || wanted.includes(r.oldPage.trim().toLowerCase())) newNames.add(r.newPage);
+    }
+    targetPagesFilter = pair.pages ? [...newNames] : undefined;
+    console.log(`\n[mapping] Mapping-file mode: ${mappedPageNames(MAPPING, 'old').length} old page(s) -> ${mappedPageNames(MAPPING, 'new').length} new page(s).`);
+  }
 
   // ── Scenario setup ────────────────────────────────────────────────────────
   // Each scenario applies a set of slicer selections before exporting. With no
   // scenarios configured, we run ONE synthetic "unfiltered" pass whose output
   // paths are exactly the originals — so default behaviour is byte-for-byte
   // unchanged from before slicers existed.
-  const configuredScenarios = getScenarios();
+  let configuredScenarios = getScenarios();
+  if (MAPPING && configuredScenarios.length > 0) {
+    // Translate filters written against the old report so they also work on the new one.
+    const fieldMap = buildFieldTranslation(MAPPING);
+    const pageNames = buildPageNameTranslation(MAPPING);
+    configuredScenarios = configuredScenarios.map(sc => translateScenarioForMapping(sc, fieldMap, pageNames));
+  }
   const UNFILTERED = Symbol('unfiltered');
   type ScenarioOrNone = SlicerScenario | typeof UNFILTERED;
   const scenarioRuns: ScenarioOrNone[] =
@@ -489,7 +531,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         tgtResult = await exportReportToWorkbook(tgtPage, token, {
           outPath:      P.actual,
           pagesFilter:  targetPagesFilter,
-          sheetNameFor: (displayName: string) => inverseMap[displayName] ?? displayName,
+          sheetNameFor: (displayName: string) => MAPPING ? displayName : (inverseMap[displayName] ?? displayName),
           label:        `target (${TARGET_LABEL}) ${P.label}`,
           beforeExport: tgtHooks.beforeExport,
           applySlicersForPage: tgtHooks.perPageHook,
@@ -500,6 +542,9 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
     } else {
       console.log(`\n[3] TARGET skipped (mode="${mode}") — no comparison will be run`);
     }
+
+    if (srcResult) writeVisualIndex(srcResult);
+    if (tgtResult) writeVisualIndex(tgtResult);
 
     // ── Source-only run: baseline refreshed, nothing to compare yet ─────────
     if (!runTarget) {
@@ -536,7 +581,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
     // junk pages on one side don't invalidate a comparison that was scoped to
     // specific pages, but the summary should say the reports' page sets differ).
     let pageAlignment: { onlyInSource: string[]; onlyInTarget: string[]; inBothCount: number } | undefined;
-    if (srcResult && tgtResult) {
+    if (srcResult && tgtResult && !MAPPING) {
       const align = diffPageSets(
         srcResult.pagesFound.map(p => p.displayName),
         tgtResult.pagesFound.map(p => p.displayName),
@@ -553,7 +598,14 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
 
     // ── Compare + summary ───────────────────────────────────────────────────
     console.log(`\n[4] Comparing expected (source) vs actual (target) ${P.label}...`);
-    const diff = await timed('compare', 'compareWorkbooks', () => compareWorkbooks(P.expected, P.actual));
+    let diff;
+    if (MAPPING) {
+      const mapped = await timed('compare', 'compareWorkbooksWithMapping', () => compareWorkbooksWithMapping(P.expected, P.actual, MAPPING!));
+      diff = mapped.diff;
+      for (const c of mapped.caveats) caveats.push(c);
+    } else {
+      diff = await timed('compare', 'compareWorkbooks', () => compareWorkbooks(P.expected, P.actual));
+    }
 
     // Read-back sanity check: every sheet we KNOW was just written must have
     // been seen by the comparator. Guards against the corrupted/partial-read
@@ -575,8 +627,10 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         }
       }
     };
-    readBackCheck(srcResult, 'expected', P.expected);
-    readBackCheck(tgtResult, 'actual', P.actual);
+    if (!MAPPING) { // mapping mode pairs by visual ID and has its own file/index consistency check
+      readBackCheck(srcResult, 'expected', P.expected);
+      readBackCheck(tgtResult, 'actual', P.actual);
+    }
 
     const { passed, differingSheets } = await timed('compare', 'writeSummary', () => writeParitySummary(
       diff,
@@ -591,6 +645,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         actualFile:     P.actual,
         comparisonCaveats: caveats,
         pageAlignment,
+        mappingFile: MAPPING ? path.basename(MAPPING.filePath) : undefined,
       },
       P.summary,
     ));

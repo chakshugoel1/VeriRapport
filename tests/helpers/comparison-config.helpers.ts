@@ -72,6 +72,16 @@ export interface ReportPair {
    * Only needed when a tab's display name differs between the two reports.
    */
   pageMap?: Record<string, string>;
+  /**
+   * Optional. Path to a KPI mapping Excel file (old report -> redesigned
+   * report). When set, the comparison pairs visuals using the mapping file
+   * instead of by title+type, and pageMap is not needed. See
+   * mapping-file.helpers.ts / mapped-compare.helpers.ts. Leave unset for the
+   * normal comparison.
+   */
+  mappingFile?: string;
+  /** Optional. Path to a mapping settings JSON (extra column-name synonyms). */
+  mappingSettingsFile?: string;
 }
 
 // ── Run mode ─────────────────────────────────────────────────────────────────
@@ -114,6 +124,8 @@ interface RuntimeParityConfig {
   source?: ReportIdentity;
   target?: ReportIdentity;
   pages?: string[];
+  mappingFile?: string;
+  mappingSettingsFile?: string;
 }
 
 function readRuntimeParityConfig(): RuntimeParityConfig | null {
@@ -154,6 +166,8 @@ function getRuntimePair(): ReportPair | null {
     source,
     target,
     pages: runtime.pages && runtime.pages.length > 0 ? runtime.pages : undefined,
+    mappingFile: runtime.mappingFile?.trim() || undefined,
+    mappingSettingsFile: runtime.mappingSettingsFile?.trim() || undefined,
   };
 }
 

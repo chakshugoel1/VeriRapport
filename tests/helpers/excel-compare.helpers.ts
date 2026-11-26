@@ -223,7 +223,7 @@ const COMBINING_DIACRITICS_RE = new RegExp(
  *  or accents (e.g. "Commodité" vs "Commodite" - observed in production,
  *  the exact same page lost its accent during migration) refer to the same
  *  page and must pair up. */
-function sheetKey(name: string): string {
+export function sheetKey(name: string): string {
   return name.normalize('NFD').replace(COMBINING_DIACRITICS_RE, '').trim().toLowerCase();
 }
 
@@ -237,8 +237,14 @@ export type VisualDiffStatus =
   | 'data-diff'        // matched 1:1 but the underlying values differ
   | 'only-in-expected' // visual (by title+type) exists only in the source export
   | 'only-in-actual'   // visual (by title+type) exists only in the target export
-  | 'ambiguous';        // more than one distinct variant on at least one side —
+  | 'ambiguous'        // more than one distinct variant on at least one side —
                         // could not safely auto-pair, needs a human look
+  | 'not-verified'     // mapping-file mode only: the mapping says this visual
+                        // exists in the new report, but its numbers could not be
+                        // located there to check (e.g. an old card inside a merged
+                        // multi-value card). Listed for a look, never a failure.
+  | 'expected-removal'; // mapping-file mode only: the mapping file says this
+                        // visual was dropped on purpose. Listed, never a failure.
 
 export interface VisualBlockDiff {
   title:          string;
@@ -270,6 +276,25 @@ export interface VisualBlockDiff {
   columnsOnlyInActual?:   string[];
   /** Human-readable explanation — why this status, what to go check. */
   note?: string;
+  /** Mapping-file mode only (see mapped-compare.helpers.ts): what the mapping
+   *  file says about this visual. Absent in the normal (no mapping) flow. */
+  mapping?: VisualMappingInfo;
+}
+
+/** What a KPI-mapping file says about one old visual (plain data, no logic). */
+export interface VisualMappingInfo {
+  /** 'same' | 'merged' | 'columns-changed' | 'dropped' | 'unmapped' | 'unknown' */
+  changeType:   string;
+  /** Human label for changeType, e.g. "Merged into a multi-value card". */
+  changeLabel:  string;
+  oldVisualId:  string;
+  newVisualId:  string;
+  newTitle?:    string;
+  newType?:     string;
+  /** Reason text from the mapping file. */
+  reason?:      string;
+  /** Old fields the mapping says were dropped (with the reason, if given). */
+  fieldsDropped?: string;
 }
 
 /** One row that exists on both sides (same text key) but with different values. */
@@ -357,7 +382,7 @@ const LENIENT_TEXT_COMPARE = (process.env['PBI_COMPARE_TEXT_LENIENT'] ?? '').tri
  * Turkish "I" is the textbook case where locale-aware casing diverges from
  * every other locale).
  */
-function canonicalizeForCompare(text: string): string {
+export function canonicalizeForCompare(text: string): string {
   if (!LENIENT_TEXT_COMPARE) return text;
   return text
     .toLowerCase()
@@ -485,7 +510,7 @@ async function hashSheetOrdered(
 // visual's title itself happens to contain brackets.
 const VISUAL_MARKER_RE = /^\[VISUAL\]\s+(.+)\s\[([^[\]]+)\]$/;
 
-interface VisualBlockRaw {
+export interface VisualBlockRaw {
   title:   string;
   type:    string;
   headers: string[];
@@ -729,7 +754,7 @@ function sharedColumns(expHeaders: string[], actHeaders: string[]): Array<{ name
 }
 
 /** Compares one matched (title, type) pair of representative blocks. */
-function compareBlockPair(
+export function compareBlockPair(
   exp: VisualBlockRaw, expCount: number,
   act: VisualBlockRaw, actCount: number,
 ): VisualBlockDiff {
@@ -1245,7 +1270,8 @@ export async function compareWorkbooks(
 
     const identical      = visuals.length > 0 ? visuals.every(v => v.status === 'identical') : true;
     const dataIdentical   = visuals.every(v =>
-      v.status === 'identical' || v.status === 'header-diff' || v.status === 'duplicate-count',
+      v.status === 'identical' || v.status === 'header-diff' || v.status === 'duplicate-count' ||
+      v.status === 'expected-removal' || v.status === 'not-verified',
     );
     const headerDiffCount = visuals.filter(v => v.status === 'header-diff').length;
     const structuralDiffCount = visuals.filter(v =>
@@ -1304,4 +1330,18 @@ export async function compareWorkbooks(
     identical,
     dataIdentical,
   };
+}
+
+/**
+ * Reads every sheet of a workbook back into its [VISUAL] blocks, in sheet
+ * order. Read-only helper for the mapping-file comparison (mapped-compare);
+ * the normal compareWorkbooks() flow does not use it. Keys are the sheet
+ * names exactly as stored in the file.
+ */
+export async function readWorkbookBlocks(filePath: string): Promise<Map<string, VisualBlockRaw[]>> {
+  const sheets = await readWorkbookSheetInfo(filePath);
+  const cache: CompareCache = { workbooks: new Map(), fastPathFailed: new Set() };
+  const out = new Map<string, VisualBlockRaw[]>();
+  for (const sh of sheets) out.set(sh.name, await streamSheetBlocks(filePath, sh, cache));
+  return out;
 }

@@ -153,6 +153,7 @@ function buildConfig() {
     pages: pages.length ? pages : undefined,
     slicerScenario,
     lenientTextCompare,
+    mappingFile: (document.getElementById('mappingFile')?.value || '').trim() || undefined,
   };
 }
 
@@ -297,6 +298,7 @@ document.getElementById('btnParity').addEventListener('click', async () => {
   appendLog(authStatus.hasSession ? '--- Starting comparison ---' : '--- No saved login session - signing in first, then comparing ---');
   if (filterCount > 0) appendLog(`--- ${filterCount} filter selection(s) applied ---`);
   if (cfg.lenientTextCompare) appendLog('--- Case-insensitive compare enabled ---');
+  if (cfg.mappingFile) appendLog(`--- Mapping-file mode: ${cfg.mappingFile} ---`);
   document.getElementById('parityResults').innerHTML = '';
   resetProgress();
 
@@ -397,6 +399,7 @@ function readForm() {
   return {
     pairName: document.getElementById('pairName').value.trim(),
     lenientTextCompare: document.getElementById('lenientTextCompare').checked,
+    mappingFile: (document.getElementById('mappingFile')?.value || '').trim(),
     source: { ...readIdentity('source') },
     target: { ...readIdentity('target') },
   };
@@ -405,6 +408,7 @@ function writeForm(f) {
   if (!f) return;
   document.getElementById('pairName').value = f.pairName || '';
   document.getElementById('lenientTextCompare').checked = !!f.lenientTextCompare;
+  setMappingFile(f.mappingFile || '');
   for (const side of ['source', 'target']) {
     ['tenantId', 'groupId', 'reportId', 'datasetId'].forEach((k) => {
       const input = document.getElementById(`${side}_${k}`);
@@ -413,6 +417,26 @@ function writeForm(f) {
     });
   }
 }
+
+// Optional KPI mapping file. Only the path is kept; the run reads the file and
+// checks it before any browser opens (a bad file stops the run with a clear message).
+function setMappingFile(p) {
+  const input = document.getElementById('mappingFile');
+  const note = document.getElementById('mappingNote');
+  if (!input) return;
+  input.value = p || '';
+  if (note) {
+    note.style.display = p ? '' : 'none';
+    note.textContent = p
+      ? 'Mapping mode: visuals are paired using this file instead of by title. Pages and visuals marked "removed on purpose" are listed, not failed.'
+      : '';
+  }
+}
+document.getElementById('btnPickMapping')?.addEventListener('click', async () => {
+  const res = await window.verirapportDesktop.pickMappingFile();
+  if (res && res.ok) { setMappingFile(res.path); scheduleSaveForm(); }
+});
+document.getElementById('btnClearMapping')?.addEventListener('click', () => { setMappingFile(''); scheduleSaveForm(); });
 
 let _saveTimer = null;
 function scheduleSaveForm() {

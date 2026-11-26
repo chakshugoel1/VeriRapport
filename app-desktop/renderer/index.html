@@ -445,6 +445,17 @@
           <input id="pairName" placeholder="Ex- Sales report (names the results folder and the saved pair)" />
         </div>
       </div>
+      <div class="fields">
+        <div class="row">
+          <div class="field-wrap"><label for="mappingFile">Mapping file (optional)</label></div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="mappingFile" readonly style="flex:1" placeholder="Leave empty for a normal comparison. Choose a KPI mapping Excel file when the new report was redesigned." />
+            <button type="button" class="secondary" id="btnPickMapping">Browse…</button>
+            <button type="button" class="secondary" id="btnClearMapping">Clear</button>
+          </div>
+          <div class="note" id="mappingNote" style="display:none"></div>
+        </div>
+      </div>
       <div class="option-toggle">
         <input type="checkbox" id="lenientTextCompare" />
         <label for="lenientTextCompare">Case-insensitive compare (may hide differences that are only upper/lower case or separators)</label>
