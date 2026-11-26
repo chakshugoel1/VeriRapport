@@ -139,22 +139,104 @@ function emptyDiff(title: string, type: string): VisualBlockDiff {
  * Compares an old visual with its new counterpart on the columns they share.
  * `mode` controls what a column that is missing from the NEW visual means.
  */
-export function compareMappedBlocks(
-  exp: VisualBlockRaw, act: VisualBlockRaw, mode: 'same' | 'columns-changed' | 'merged',
-): VisualBlockDiff {
+/** Optional field lists from the mapping row, used to pair renamed columns. */
+export interface MappedFields { oldFields: string[]; newFields: string[] }
+
+/** Value equality for card values: trimmed text, or the same number ("1,234.50" == "1234.5"). */
+function sameValue(a: string, b: string): boolean {
+  const x = (a ?? '').trim(), y = (b ?? '').trim();
+  if (x === y) return true;
+  const num = (t: string) => {
+    const c = t.replace(/[\s,]/g, '').replace(/%$/, '');
+    return /^-?\d+(\.\d+)?$/.test(c) ? Number(c) : NaN;
+  };
+  const nx = num(x), ny = num(y);
+  return !Number.isNaN(nx) && !Number.isNaN(ny) && Math.abs(nx - ny) < 1e-9;
+}
+
+/**
+ * Pairs the old visual's columns with the new visual's columns, in passes:
+ *   1. same field name (ignoring case, spaces, underscores, "Sum of");
+ *   2. through the mapping file's old/new field lists (old header -> old
+ *      field -> new field -> new header), which catches renamed fields;
+ *   3. 'same' only: when both sides still have the same number of unpaired
+ *      columns, pair them by position. This is what lets a single-value card
+ *      whose label changed ("M_Last Available Period_EC" -> "Last closed
+ *      period") still have its VALUE compared.
+ * Returns the pairs and how each was found (for the note).
+ */
+function pairColumns(
+  exp: VisualBlockRaw, act: VisualBlockRaw, mode: 'same' | 'columns-changed' | 'merged', fields?: MappedFields,
+): { shared: Array<{ e: number; a: number }>; how: Set<'name' | 'mapping' | 'position'> } {
+  const how = new Set<'name' | 'mapping' | 'position'>();
   const eIdx = columnIndex(exp.headers);
   const aIdx = columnIndex(act.headers);
-
   const shared: Array<{ e: number; a: number }> = [];
-  for (const [k, e] of eIdx) {
-    const a = aIdx.get(k);
-    if (a !== undefined) shared.push({ e, a });
+  const usedE = new Set<number>(), usedA = new Set<number>();
+  const take = (e: number, a: number, h: 'name' | 'mapping' | 'position') => {
+    if (usedE.has(e) || usedA.has(a)) return;
+    shared.push({ e, a }); usedE.add(e); usedA.add(a); how.add(h);
+  };
+
+  for (const [k, e] of eIdx) { const a = aIdx.get(k); if (a !== undefined) take(e, a, 'name'); }
+
+  if (fields && fields.oldFields.length > 0 && fields.newFields.length > 0) {
+    const oldKeys = fields.oldFields.map(f => normalizeFieldName(f));
+    const newKeys = fields.newFields.map(f => normalizeFieldName(f));
+    for (const [k, e] of eIdx) {
+      if (usedE.has(e)) continue;
+      const oi = oldKeys.indexOf(k);
+      if (oi < 0) continue;
+      // Same field name in the new list wins; for a 'same' KPI the lists line up by position.
+      let ni = newKeys.indexOf(oldKeys[oi]);
+      if (ni < 0 && mode === 'same' && fields.oldFields.length === fields.newFields.length) ni = oi;
+      if (ni < 0) continue;
+      const a = aIdx.get(newKeys[ni]);
+      if (a !== undefined) take(e, a, 'mapping');
+    }
   }
+
+  if (mode === 'same') {
+    const restE = exp.headers.map((_, i) => i).filter(i => !usedE.has(i));
+    const restA = act.headers.map((_, i) => i).filter(i => !usedA.has(i));
+    if (restE.length > 0 && restE.length === restA.length) restE.forEach((e, i) => take(e, restA[i], 'position'));
+  }
+
   shared.sort((x, y) => x.e - y.e);
+  return { shared, how };
+}
+
+/**
+ * Compares an old visual with its new counterpart on the columns they share.
+ * `mode` controls what a column that is missing from the NEW visual means.
+ * `fields` (optional) are the mapping row's old/new field lists.
+ */
+export function compareMappedBlocks(
+  exp: VisualBlockRaw, act: VisualBlockRaw, mode: 'same' | 'columns-changed' | 'merged', fields?: MappedFields,
+): VisualBlockDiff {
+  const { shared, how } = pairColumns(exp, act, mode, fields);
   const sharedE = new Set(shared.map(s => s.e));
   const sharedA = new Set(shared.map(s => s.a));
   const missingInNew = exp.headers.filter((_, i) => !sharedE.has(i));
   const extraInNew   = act.headers.filter((_, i) => !sharedA.has(i));
+
+  // Merged card, nothing paired by name or mapping: look for the old card's
+  // single value inside the new card's values.
+  if (shared.length === 0 && mode === 'merged' && exp.rows.length === 1 && exp.headers.length === 1) {
+    const value = exp.rows[0][0] ?? '';
+    const hits: number[] = [];
+    act.headers.forEach((_, a) => { if (act.rows.some(r => sameValue(r[a] ?? '', value))) hits.push(a); });
+    if (hits.length > 0 && value.trim() !== '') {
+      const d = emptyDiff(exp.title, exp.type);
+      d.status = 'identical';
+      d.rowsExpected = 1; d.rowsActual = act.rows.length;
+      d.headerExpected = exp.headers; d.headerActual = act.headers;
+      d.note = `Found by value: the old card's value "${value}" appears in the new combined card` +
+        (hits.length === 1 ? ` (column "${act.headers[hits[0]]}").` : ` (in ${hits.length} columns: ${hits.map(h => act.headers[h]).join(', ')}).`) +
+        ' The labels differ, so this is a value match, not a field match.';
+      return d;
+    }
+  }
 
   if (shared.length === 0) {
     const d = emptyDiff(exp.title, exp.type);
@@ -162,8 +244,8 @@ export function compareMappedBlocks(
     d.rowsExpected = exp.rows.length; d.rowsActual = act.rows.length;
     d.headerExpected = exp.headers; d.headerActual = act.headers;
     d.note = mode === 'merged'
-      ? `Could not find this card's value(s) (${exp.headers.join(', ') || 'no columns'}) inside the new combined card (columns: ${act.headers.join(', ') || 'none'}), so it was not compared. Check it by eye.`
-      : `None of this visual's columns (${exp.headers.join(', ')}) could be matched by name in the new visual (${act.headers.join(', ')}), so it was not compared. Check it by eye.`;
+      ? `Could not find this card's value(s) (${exp.headers.join(', ') || 'no columns'}) inside the new combined card (columns: ${act.headers.join(', ') || 'none'}) by field name, by the mapping's field lists, or by value, so it was not compared. Check it by eye.`
+      : `None of this visual's columns (${exp.headers.join(', ')}) could be matched in the new visual (${act.headers.join(', ')}), so it was not compared. Check it by eye.`;
     return d;
   }
 
@@ -182,6 +264,12 @@ export function compareMappedBlocks(
 
   const notes: string[] = [];
   if (d.note) notes.push(d.note);
+  if (how.has('mapping')) notes.push('Renamed column(s) paired using the mapping file\'s old/new field lists.');
+  if (how.has('position')) {
+    const pos = shared.filter(x => normalizeFieldName(exp.headers[x.e]) !== normalizeFieldName(act.headers[x.a]))
+      .map(x => `"${exp.headers[x.e]}" -> "${act.headers[x.a]}"`);
+    if (pos.length > 0) notes.push(`Labels differ (${pos.join(', ')}); compared by position because the mapping file says this is the same KPI.`);
+  }
   const spellingDiffers = shared.some(s => exp.headers[s.e].trim().toLowerCase() !== act.headers[s.a].trim().toLowerCase());
   if (d.status === 'identical' && spellingDiffers) {
     d.status = 'header-diff';
@@ -298,7 +386,8 @@ export async function compareWorkbooksWithMapping(
       d.onlyInActualCount = newRef.block.rows.length;
       d.note = 'The old visual exported no data, but the new visual did.';
     } else {
-      d = compareMappedBlocks(oldRef!.block, newRef!.block, row.matchType as 'same' | 'columns-changed' | 'merged');
+      d = compareMappedBlocks(oldRef!.block, newRef!.block, row.matchType as 'same' | 'columns-changed' | 'merged',
+        { oldFields: row.oldFields, newFields: row.newFields });
       d.title = title; d.type = type;
     }
     push(sheet, withMapping(d, row));

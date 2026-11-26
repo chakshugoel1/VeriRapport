@@ -620,3 +620,30 @@ export async function setPageFieldFilters(page: Page, specs: Array<{ target: Sli
   }, specs);
   await page.waitForTimeout(SLICER_SETTLE_MS);
 }
+
+// ── Pre-applied filter clearing ("no-filter baseline") ──────────────────────
+
+export interface PreappliedClearResult {
+  page: string;
+  pageFiltersCleared: number;
+  slicersCleared: string[];
+  errors: string[];
+}
+
+/** Clears report-level filters ("Filters on all pages"). Returns how many there were. */
+export async function clearReportPreapplied(page: Page): Promise<number> {
+  const before = await getGlobalFilters(page).catch(() => [] as GlobalFilterInfo[]);
+  await clearGlobalFilters(page);
+  return before.length;
+}
+
+/**
+ * Clears the ACTIVE page's page-level filters and every slicer selection
+ * (visual-level filters and row-level security are left alone). Waits for
+ * the page to redraw only when something was actually cleared.
+ */
+export async function clearPagePreapplied(page: Page): Promise<PreappliedClearResult> {
+  const res = await page.evaluate((): Promise<PreappliedClearResult> => (window as any).__clearPagePreapplied());
+  if (res.pageFiltersCleared > 0 || res.slicersCleared.length > 0) await page.waitForTimeout(SLICER_SETTLE_MS);
+  return res;
+}

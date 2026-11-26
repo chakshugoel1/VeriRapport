@@ -59,7 +59,7 @@ import {
   getForPageCI,
   type SlicerScenario,
 } from '../helpers/slicer-config.helpers';
-import { setSlicerSelection, setGlobalFieldFilters, clearGlobalFilters, setPageFieldFilters } from '../helpers/harness.helpers';
+import { setSlicerSelection, setGlobalFieldFilters, clearGlobalFilters, setPageFieldFilters, clearReportPreapplied, clearPagePreapplied } from '../helpers/harness.helpers';
 
 const SOURCE_LABEL = 'Import mode';
 const TARGET_LABEL = 'Direct Lake';
@@ -371,7 +371,50 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
   // the summary rather than masquerade as a data difference.
   type FilterIssue = { page: string; error: string };
 
-  const makeHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target') => {
+  // ── No-filter baseline ───────────────────────────────────────────────────
+  // By default, whatever the report author left applied (report-level
+  // filters, page-level filters, slicer selections) is CLEARED on both
+  // reports before exporting, so a run with no filters picked in the app
+  // shows the reports' full data, and a run with filters picked applies ONLY
+  // those. Visual-level filters (part of a KPI's definition) and row-level
+  // security are not touched. PBI_KEEP_PREAPPLIED_FILTERS=1 restores the old
+  // behaviour (export the reports as saved).
+  const CLEAR_PREAPPLIED = (process.env['PBI_KEEP_PREAPPLIED_FILTERS'] ?? '').trim() !== '1';
+  type ClearStats = { reportFilters: number; pageFilters: number; slicers: number; pages: Set<string>; issues: FilterIssue[] };
+  const newClearStats = (): ClearStats => ({ reportFilters: 0, pageFilters: 0, slicers: 0, pages: new Set(), issues: [] });
+
+  const makeHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target', clear: ClearStats) => {
+    const inner = makeScenarioHooks(sc, filterIssues, side);
+    if (!CLEAR_PREAPPLIED) return inner;
+    return {
+      beforeExport: async (p: import('@playwright/test').Page): Promise<void> => {
+        try {
+          clear.reportFilters += await clearReportPreapplied(p);
+        } catch (e) {
+          clear.issues.push({ page: '(all pages)', error: `report-level filters: ${(e as Error).message}` });
+        }
+        if (inner.beforeExport) await inner.beforeExport(p);
+      },
+      perPageHook: async (p: import('@playwright/test').Page, pageDisplayName: string): Promise<void> => {
+        try {
+          const r = await clearPagePreapplied(p);
+          clear.pageFilters += r.pageFiltersCleared;
+          clear.slicers += r.slicersCleared.length;
+          if (r.pageFiltersCleared > 0 || r.slicersCleared.length > 0) {
+            clear.pages.add(pageDisplayName);
+            console.log(`      · cleared pre-applied filters on "${pageDisplayName}": ${r.pageFiltersCleared} page filter(s)` +
+              (r.slicersCleared.length ? `, slicer(s): ${r.slicersCleared.join(', ')}` : ''));
+          }
+          for (const err of r.errors) clear.issues.push({ page: pageDisplayName, error: err });
+        } catch (e) {
+          clear.issues.push({ page: pageDisplayName, error: (e as Error).message });
+        }
+        if (inner.perPageHook) await inner.perPageHook(p, pageDisplayName);
+      },
+    };
+  };
+
+  const makeScenarioHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target') => {
     if (sc === UNFILTERED) return { beforeExport: undefined, perPageHook: undefined };
 
     // A selection tagged `side: 'source'` or `side: 'target'` (set by the
@@ -499,10 +542,12 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
     // ── Export SOURCE (Import mode) → expected.xlsx ─────────────────────────
     let srcResult: ReportExportResult | null = null;
     const srcFilterIssues: { page: string; error: string }[] = [];
+    const srcClear = newClearStats();
+    const tgtClear = newClearStats();
     if (runSource) {
       console.log(`\n[2] SOURCE (${SOURCE_LABEL}) → expected values ${P.label}`);
       applyReportIdentity(pair.source);
-      const srcHooks = makeHooks(sc, srcFilterIssues, 'source'); // fresh plan — independent from target's
+      const srcHooks = makeHooks(sc, srcFilterIssues, 'source', srcClear); // fresh plan — independent from target's
       const srcPage = await context.newPage();
       try {
         srcResult = await exportReportToWorkbook(srcPage, token, {
@@ -525,7 +570,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
     if (runTarget) {
       console.log(`\n[3] TARGET (${TARGET_LABEL}) → actual values ${P.label}`);
       applyReportIdentity(pair.target);
-      const tgtHooks = makeHooks(sc, tgtFilterIssues, 'target'); // fresh plan — independent from source's
+      const tgtHooks = makeHooks(sc, tgtFilterIssues, 'target', tgtClear); // fresh plan — independent from source's
       const tgtPage = await context.newPage();
       try {
         tgtResult = await exportReportToWorkbook(tgtPage, token, {
@@ -566,6 +611,23 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
     const caveats: string[] = [...preflightCaveats];
     for (const i of srcFilterIssues) {
       caveats.push(`Filter application FAILED on SOURCE page "${i.page}" — that page was exported UNFILTERED on the source side. (${i.error})`);
+    }
+    for (const [label, cs] of [['SOURCE', srcClear], ['TARGET', tgtClear]] as const) {
+      for (const i of cs.issues) {
+        caveats.push(`Could not clear the report's saved filters on ${label} page "${i.page}" — that page may still be filtered on the ${label.toLowerCase()} side. (${i.error})`);
+      }
+    }
+    const runNotes: string[] = [];
+    if (CLEAR_PREAPPLIED) {
+      const describe = (label: string, cs: ClearStats, ran: boolean) => !ran ? `${label}: not exported in this run.` :
+        (cs.reportFilters + cs.pageFilters + cs.slicers === 0
+          ? `${label}: no saved filters or slicer selections were found.`
+          : `${label}: cleared ${cs.reportFilters} report-level filter(s), ${cs.pageFilters} page-level filter(s) and ${cs.slicers} slicer selection(s) on ${cs.pages.size} page(s).`);
+      runNotes.push(`Saved filters were cleared before export (${sc === UNFILTERED ? 'no filters were picked, so both reports show their full data' : 'only the filters picked in the app were then applied'}). ` +
+        `${describe('Source', srcClear, runSource)} ${describe('Target', tgtClear, runTarget)}`);
+      runNotes.push('Not cleared: visual-level filters (part of a KPI\'s own definition) and row-level security (RLS), which always applies to the signed-in user.');
+    } else {
+      runNotes.push('The reports were exported with their saved filters and slicer selections (PBI_KEEP_PREAPPLIED_FILTERS=1).');
     }
     for (const i of tgtFilterIssues) {
       caveats.push(`Filter application FAILED on TARGET page "${i.page}" — that page was exported UNFILTERED on the target side. (${i.error})`);
@@ -646,6 +708,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         comparisonCaveats: caveats,
         pageAlignment,
         mappingFile: MAPPING ? path.basename(MAPPING.filePath) : undefined,
+        notes: runNotes,
       },
       P.summary,
     ));

@@ -154,6 +154,7 @@ function buildConfig() {
     slicerScenario,
     lenientTextCompare,
     mappingFile: (document.getElementById('mappingFile')?.value || '').trim() || undefined,
+    keepSavedFilters: document.getElementById('keepSavedFilters')?.checked === true,
   };
 }
 
@@ -298,6 +299,9 @@ document.getElementById('btnParity').addEventListener('click', async () => {
   appendLog(authStatus.hasSession ? '--- Starting comparison ---' : '--- No saved login session - signing in first, then comparing ---');
   if (filterCount > 0) appendLog(`--- ${filterCount} filter selection(s) applied ---`);
   if (cfg.lenientTextCompare) appendLog('--- Case-insensitive compare enabled ---');
+  appendLog(cfg.keepSavedFilters
+    ? '--- Keeping the filters saved in the reports ---'
+    : '--- Clearing the filters saved in the reports before export ---');
   if (cfg.mappingFile) appendLog(`--- Mapping-file mode: ${cfg.mappingFile} ---`);
   document.getElementById('parityResults').innerHTML = '';
   resetProgress();
@@ -400,6 +404,7 @@ function readForm() {
     pairName: document.getElementById('pairName').value.trim(),
     lenientTextCompare: document.getElementById('lenientTextCompare').checked,
     mappingFile: (document.getElementById('mappingFile')?.value || '').trim(),
+    keepSavedFilters: document.getElementById('keepSavedFilters').checked,
     source: { ...readIdentity('source') },
     target: { ...readIdentity('target') },
   };
@@ -409,6 +414,7 @@ function writeForm(f) {
   document.getElementById('pairName').value = f.pairName || '';
   document.getElementById('lenientTextCompare').checked = !!f.lenientTextCompare;
   setMappingFile(f.mappingFile || '');
+  document.getElementById('keepSavedFilters').checked = !!f.keepSavedFilters;
   for (const side of ['source', 'target']) {
     ['tenantId', 'groupId', 'reportId', 'datasetId'].forEach((k) => {
       const input = document.getElementById(`${side}_${k}`);
@@ -448,7 +454,7 @@ async function saveFormNow() {
   _state.lastForm = readForm();
   try { await window.verirapportDesktop.saveState(_state); } catch { /* non-fatal */ }
 }
-['pairName', 'lenientTextCompare'].forEach((id) => {
+['pairName', 'lenientTextCompare', 'keepSavedFilters'].forEach((id) => {
   const el = document.getElementById(id);
   el.addEventListener('input', scheduleSaveForm);
   el.addEventListener('change', scheduleSaveForm);

@@ -18,6 +18,7 @@
     __clearGlobalFilters()         → Promise<...>  clear all report-level filters
     __getGlobalFilters()           → Promise<...>  read existing report-level filters (fast, no page crawl)
     __setPageFieldFilters(specs)   → Promise<...>  apply Basic filters (array) to the ACTIVE page only, no visual needed
+    __clearPagePreapplied()        → Promise<...>  clear page-level filters + every slicer selection on the ACTIVE page
     __exportSingleVisual(name)     → Promise<...>  export one visual's data by name (for reading slicer options)
     __rendered                     → boolean  true after first render
     __lastError                    → string | null
@@ -415,6 +416,46 @@
         throw new Error('page.setFilters failed for "' + active.displayName + '" (' + filters.length + ' field(s)): ' + msg + ' | raw=' + raw);
       }
       return { page: active.displayName, count: filters.length };
+    };
+
+    // Clears what the report author saved on the ACTIVE page: the page-level
+    // filters ("Filters on this page") and every slicer's current selection,
+    // so an export shows the page's data with nothing narrowed down. Visual-
+    // level filters are deliberately NOT touched: those are usually part of a
+    // KPI's own definition (e.g. a card that only counts open projects), not a
+    // user selection. Row-level security cannot be removed from here.
+    // Each step is tried independently; failures are reported, not thrown, so
+    // the caller can record exactly what could not be cleared.
+    window.__clearPagePreapplied = async function() {
+      var pages  = await window.__report.getPages();
+      var active = pages.find(function(p) { return p.isActive; }) || pages[0];
+      var out = { page: active.displayName, pageFiltersCleared: 0, slicersCleared: [], errors: [] };
+      try {
+        var existing = await active.getFilters();
+        out.pageFiltersCleared = (existing || []).length;
+        if (out.pageFiltersCleared > 0) await active.setFilters([]);
+      } catch (e) {
+        out.errors.push('page filters: ' + ((e && e.message) ? e.message : String(e)));
+      }
+      var visuals = [];
+      try { visuals = await active.getVisuals(); } catch (e) {
+        out.errors.push('list visuals: ' + ((e && e.message) ? e.message : String(e)));
+      }
+      var slicers = visuals.filter(function(v) { return v.type === 'slicer' || v.type === 'advancedSlicer'; });
+      for (var i = 0; i < slicers.length; i++) {
+        var v = slicers[i];
+        try {
+          var state = await v.getSlicerState();
+          var hasSelection = state && state.filters && state.filters.length > 0;
+          if (hasSelection) {
+            await v.setSlicerState({ filters: [] });
+            out.slicersCleared.push(v.title || v.name);
+          }
+        } catch (e) {
+          out.errors.push('slicer "' + (v.title || v.name) + '": ' + ((e && e.message) ? e.message : String(e)));
+        }
+      }
+      return out;
     };
 
     // Export a single visual's data by name (used to read a slicer's full

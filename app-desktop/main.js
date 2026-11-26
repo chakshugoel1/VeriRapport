@@ -342,6 +342,10 @@ async function runParity(config) {
   // user-facing toggle since there's no downside to leaving it on.
   extraEnv.PBI_SLICER_GLOBAL_FILTERS = '1';
 
+  // Default: clear the reports' saved filters/slicers before export (see
+  // CLEAR_PREAPPLIED in report-parity.spec.ts). The checkbox keeps them.
+  extraEnv.PBI_KEEP_PREAPPLIED_FILTERS = config.keepSavedFilters ? '1' : '0';
+
   if (config.lenientTextCompare) {
     extraEnv.PBI_COMPARE_TEXT_LENIENT = '1';
     emitLog('[verirapport] Lenient text compare enabled.');

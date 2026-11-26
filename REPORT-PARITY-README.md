@@ -136,14 +136,24 @@ How each match type is handled:
 
 | Match type | What happens |
 |---|---|
-| Same KPI | Values compared directly. Field names that differ only in spelling (`Project Number` vs `PROJECT_NUMBER`) count as the same. |
+| Same KPI | Values compared directly. Field names that differ only in spelling (`Project Number` vs `PROJECT_NUMBER`) count as the same. A card whose label was renamed (`M_Last Available Period_EC` vs `Last closed period`) is paired through the mapping's field lists, or by position, so its value is still compared. |
 | Same table, columns changed | Only the columns both reports have are compared. Removed columns are listed. |
-| Merged into a multi-value card | The old card's value is looked up inside the new card and compared. If it cannot be found, the card is **Not verified** (listed for a look, not a failure). |
+| Merged into a multi-value card | The old card's value is looked up inside the new card: by field name, then through the mapping file's old/new field lists, then by value. Only if all three fail is the card **Not verified** (listed for a look, not a failure). |
 | No same KPI / dropped | Listed as **Removed on purpose**, with the reason. Not a failure. |
 
 The *Visual Comparison* sheet gets four extra columns: Change type, Old visual ID, New visual ID, Why changed. Filters written against the old report are translated to the new field and page names where the mapping shows the rename.
 
 Notes: each export now also writes a small `*.visual-index.json` file next to `expected.xlsx` / `actual.xlsx` (which visual ID is which block). Mapping mode needs it, so re-export the source once after updating. Without a mapping file, nothing changes.
+
+## Saved filters in the reports (no-filter baseline)
+
+By default, before exporting each page, VériRapport **clears what the report author left applied** on both reports: report-level filters ("Filters on all pages"), page-level filters ("Filters on this page") and every slicer's selection.
+
+- **No filters picked in the app:** both reports are compared on their full data.
+- **Filters picked in the app:** only those are applied, after clearing.
+- **Not cleared:** visual-level filters (they are usually part of a KPI's definition, for example a card that only counts open projects), and **row-level security (RLS)**, which always applies to the signed-in user and cannot be removed by the tool.
+- The summary's *Parity Summary* sheet lists what was cleared on each side ("ℹ Note" rows). If something could not be cleared on one side, the run is marked *not comparable* with the reason.
+- To export the reports exactly as saved (the old behaviour), tick **Keep the filters and slicer selections saved in the reports** in the app, or set `PBI_KEEP_PREAPPLIED_FILTERS=1`.
 
 ## Notes
 

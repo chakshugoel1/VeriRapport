@@ -545,6 +545,8 @@ export interface ParitySummaryMeta {
    * result, pass OR fail.
    */
   comparisonCaveats?: string[];
+  /** Plain information lines shown on the summary sheet (never change the verdict). */
+  notes?: string[];
   /** Mapping-file mode: path/name of the KPI mapping file that drove the comparison. */
   mappingFile?: string;
   /** Full page-set alignment between the two reports (informational). */
@@ -1011,6 +1013,7 @@ export async function writeParitySummary(
     rows.push(['Report Pages Only In Source Report', meta.pageAlignment.onlyInSource.join(', ') || '(none)']);
     rows.push(['Report Pages Only In Target Report', meta.pageAlignment.onlyInTarget.join(', ') || '(none)']);
   }
+  (meta.notes ?? []).forEach((n, i) => rows.push([`ℹ Note ${i + 1}`, n]));
   caveats.forEach((c, i) => rows.push([`⚠ Caveat ${i + 1}`, c]));
   rows.push(['Overall Result', verdict]);
   let verdictRow: ExcelJS.Row | undefined;

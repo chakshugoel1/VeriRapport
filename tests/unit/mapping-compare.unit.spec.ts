@@ -130,6 +130,36 @@ test.describe('compareMappedBlocks', () => {
     const d = compareMappedBlocks(blk('', 'card', ['Budget'], [['10']]), blk('Details', 'cardVisual', ['Name', 'Budget'], [['P1', '11']]), 'merged');
     expect(d.status).toBe('data-diff');
   });
+  test('same-KPI card whose label changed is compared by value (position), not skipped', () => {
+    const ok = compareMappedBlocks(blk('', 'card', ['M_Last Available Period_EC'], [['10-26']]), blk('', 'cardVisual', ['Last closed period'], [['10-26']]), 'same');
+    expect(ok.status).toBe('header-diff');
+    expect(ok.note).toMatch(/compared by position/);
+    const bad = compareMappedBlocks(blk('', 'card', ['M_Last Available Period_EC'], [['10-26']]), blk('', 'cardVisual', ['Last closed period'], [['09-26']]), 'same');
+    expect(bad.status).toBe('data-diff');
+  });
+  test('multiRowCard -> cardVisual with all labels renamed: paired by position', () => {
+    const d = compareMappedBlocks(blk('', 'multiRowCard', ['A1', 'B1'], [['1', '2']]), blk('', 'cardVisual', ['X', 'Y'], [['1', '2']]), 'same');
+    expect(d.status).toBe('header-diff');
+  });
+  test('renamed field paired through the mapping file field lists', () => {
+    const d = compareMappedBlocks(
+      blk('', 'card', ['Budget EUR'], [['10']]),
+      blk('Details', 'cardVisual', ['Name', 'BUDGET_TOTAL'], [['P', '10']]), 'merged',
+      { oldFields: ['T[Budget EUR]'], newFields: ['T[Name]', 'T[BUDGET_TOTAL]'] });
+    // old field Budget EUR is not in new list by name -> falls through to value search
+    expect(d.status).toBe('identical');
+    const d2 = compareMappedBlocks(
+      blk('', 'card', ['Budget EUR'], [['10']]),
+      blk('', 'cardVisual', ['Budget Total'], [['11']]), 'same',
+      { oldFields: ['T[Budget EUR]'], newFields: ['T[Budget Total]'] });
+    expect(d2.status).toBe('data-diff');
+    expect(d2.note).toMatch(/mapping file/);
+  });
+  test('merged: old value found by value when labels differ', () => {
+    const d = compareMappedBlocks(blk('', 'card', ['C_PARENT_BLANK'], [['1,234.50']]), blk('Details', 'cardVisual', ['Name', 'Parent'], [['P1', '1234.5']]), 'merged');
+    expect(d.status).toBe('identical');
+    expect(d.note).toMatch(/Found by value/);
+  });
   test('merged: value cannot be located -> not-verified (never a failure)', () => {
     const d = compareMappedBlocks(blk('', 'card', ['C_PARENT_BLANK'], [['x']]), blk('Details', 'cardVisual', ['Name', 'Status'], [['P1', 'Open']]), 'merged');
     expect(d.status).toBe('not-verified');
