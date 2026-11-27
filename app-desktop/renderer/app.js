@@ -171,9 +171,8 @@ function validateForParity(cfg) {
       else if (!GUID_RE.test(cfg[side][k])) problems.push({ input, text: `${sideName}: ${FIELD_LABELS[k]} is not in the expected ID format` });
     }
   }
-  if (cfg.source.reportId && cfg.source.reportId === cfg.target.reportId && cfg.source.groupId === cfg.target.groupId) {
-    problems.push({ input: document.getElementById('target_reportId'), text: 'Source and Target are the same report — nothing to compare' });
-  }
+  // Identical Source/Target IDs are allowed on purpose (e.g. same report with
+  // different filters). A non-blocking note is logged in the Run handler.
   return problems;
 }
 
@@ -298,6 +297,7 @@ document.getElementById('btnParity').addEventListener('click', async () => {
   const filterCount = Object.values(cfg.slicerScenario.pages).reduce((n, sels) => n + sels.length, 0);
   appendLog(authStatus.hasSession ? '--- Starting comparison ---' : '--- No saved login session - signing in first, then comparing ---');
   if (filterCount > 0) appendLog(`--- ${filterCount} filter selection(s) applied ---`);
+  if (cfg.source.reportId && cfg.source.reportId === cfg.target.reportId && cfg.source.groupId === cfg.target.groupId) appendLog('--- Note: Source and Target are the same report. Fine for comparing different filters; otherwise both sides will match. ---');
   if (cfg.lenientTextCompare) appendLog('--- Case-insensitive compare enabled ---');
   appendLog(cfg.keepSavedFilters
     ? '--- Keeping the filters saved in the reports ---'
