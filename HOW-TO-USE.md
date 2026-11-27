@@ -90,6 +90,6 @@ exported and compared. The raw log is under **Technical details**. Use **Sign in
 again** if your saved session has expired.
 
 **3 · Review.** The verdict and per-page results appear in the app. Open
-`parity-summary.xlsx` for the full detail (Parity Summary, Page Comparison,
-Visual Comparison, Differences, Changed Values), or open the results folder for
+`parity-summary.xlsx` for the full detail (At a glance, What differs,
+All visuals, Changed values, Filters Applied, Run details, Differences), or open the results folder for
 `expected.xlsx` and `actual.xlsx`.

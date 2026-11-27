@@ -1089,6 +1089,11 @@ export async function writeParitySummary(
     { header: 'How it was paired',            key: 'paired', width: 28 },
     { header: 'Why it came back empty',       key: 'empty',  width: 58 },
     { header: 'Details',                      key: 'details',width: 16 },
+    ...(classified.some(c => c.v.mapping) ? [
+      { header: 'Old visual ID', key: 'oldId', width: 24 },
+      { header: 'New visual ID', key: 'newId', width: 24 },
+      { header: 'Why changed (mapping file)', key: 'mapReason', width: 50 },
+    ] : []),
   ];
   styleHeader(visWs, visWs.columns.length);
   const visRows = new Map<VisualBlockDiff, ExcelJS.Row>();
@@ -1101,6 +1106,8 @@ export async function writeParitySummary(
       sheet: c.sheet, title: v.title, type: v.type, result: c.result,
       note: v.note ?? '', rowsE: v.rowsExpected, rowsA: v.rowsActual,
       paired: c.paired, empty: c.emptyReason, details: '',
+      oldId: v.mapping?.oldVisualId ?? '', newId: v.mapping?.newVisualId ?? '',
+      mapReason: v.mapping ? [v.mapping.reason, v.mapping.fieldsDropped ? `Fields dropped: ${v.mapping.fieldsDropped}` : ''].filter(Boolean).join(' — ') : '',
     });
     visRows.set(v, row);
     if (!firstVisRowOfPage.has(c.sheet)) firstVisRowOfPage.set(c.sheet, row.number);

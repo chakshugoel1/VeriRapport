@@ -199,12 +199,13 @@ same-origin and `postMessage` calls work. Details: `tests/helpers/harness.helper
    compares **visual to visual**, so a visual that moved or a column that was
    renamed is not treated as a data difference.
 4. `parity-summary.xlsx` is generated with these sheets:
-   - **Parity Summary** — overall verdict and counts
-   - **Page Comparison** — one row per report page
-   - **Visual Comparison** — one row per visual, with an exact status
-     (identical / header text differs / duplicated / values differ / missing / ambiguous)
-   - **Differences** — rows that exist on one side only
-   - **Changed Values** — which cell changed, from what to what
+   - **At a glance** — verdict, "same filters on both reports?", version / refresh facts, counts and a page-by-page table
+   - **What differs** — real differences only, with the biggest changes
+   - **All visuals** — every visual, worst first, with a "Why it came back empty" column
+   - **Changed values** — which cell changed, from what to what
+   - **Filters Applied** — filters and slicers found, cleared, kept and applied on each report
+   - **Run details** — report IDs, files and counts
+   - **Differences** — side-by-side boxes for each differing visual
 
 The Playwright test fails only on a real automation error (sign-in failed, a
 report wouldn't embed, a file wasn't written). Finding that the two reports'

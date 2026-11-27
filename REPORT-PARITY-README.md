@@ -102,16 +102,25 @@ Everything lands in **`playwright-report-parity/<PairName>/`**:
 | `parity-result.json` | Machine-readable result (read by the desktop app) |
 | `discovered-slicers.json` | Filters found by Load filters / `discover:slicers` |
 
-`parity-summary.xlsx` has five sheets:
+`parity-summary.xlsx` has these sheets, in reading order:
 
-- **Parity Summary** — PASS/FAIL verdict, which reports were compared, counts
-- **Page Comparison** — per page: rows in source, rows in target, rows only on
-  one side, and status (Identical / Different / Missing / Only in target)
-- **Visual Comparison** — one row per Power BI visual, with an exact status
-  (identical / header text differs / duplicated / values differ / missing /
-  ambiguous)
-- **Differences** — rows that exist on one side only
-- **Changed Values** — which cell changed, from what to what (with % change)
+- **At a glance** — the verdict, whether the same filters were used on both
+  reports, report version / data-refresh facts, a count of visuals in five
+  plain groups, and a page-by-page table.
+- **What differs** — real differences only, with the three biggest changes.
+- **All visuals** — one row per visual, worst first. The groups are:
+  ❌ real difference, 🔍 check by eye, ℹ️ differs as expected (version / refresh
+  date / last closed period), ⚪ nothing to compare (empty on both sides or
+  removed on purpose), ✅ match. The **Why it came back empty** column says why
+  a visual exported nothing (for example "Returned 0 rows" or an export error).
+- **Changed values** — every changed cell, biggest change first (with % change).
+- **Filters Applied** — filters and slicers found, cleared, kept and applied.
+- **Run details** — report IDs, files, page and mapping counts.
+- **Differences** — side-by-side boxes for each differing visual.
+
+Visuals that export no data are no longer counted as "identical": they are
+listed as "nothing to compare" with the reason. A visual that returns exactly
+30,000 rows hit Power BI's export limit and is flagged on *At a glance*.
 
 **The test does NOT fail (does not go red) just because the data differs.**
 A data mismatch is a normal, expected finding — it's recorded as a
@@ -141,7 +150,7 @@ How each match type is handled:
 | Merged into a multi-value card | The old card's value is looked up inside the new card: by field name, then through the mapping file's old/new field lists, then by value. Only if all three fail is the card **Not verified** (listed for a look, not a failure). |
 | No same KPI / dropped | Listed as **Removed on purpose**, with the reason. Not a failure. |
 
-The *Visual Comparison* sheet gets four extra columns: Change type, Old visual ID, New visual ID, Why changed. Filters written against the old report are translated to the new field and page names where the mapping shows the rename.
+The *All visuals* sheet gets three extra columns: Old visual ID, New visual ID, Why changed. Filters written against the old report are translated to the new field and page names where the mapping shows the rename.
 
 Notes: each export now also writes a small `*.visual-index.json` file next to `expected.xlsx` / `actual.xlsx` (which visual ID is which block). Mapping mode needs it, so re-export the source once after updating. Without a mapping file, nothing changes.
 
@@ -152,7 +161,7 @@ By default, before exporting each page, VériRapport **clears what the report au
 - **No filters picked in the app:** both reports are compared on their full data.
 - **Filters picked in the app:** only those are applied, after clearing.
 - **Not cleared:** visual-level filters (they are usually part of a KPI's definition, for example a card that only counts open projects), and **row-level security (RLS)**, which always applies to the signed-in user and cannot be removed by the tool.
-- The summary's *Parity Summary* sheet lists what was cleared on each side ("ℹ Note" rows). If something could not be cleared on one side, the run is marked *not comparable* with the reason.
+- The summary's *At a glance* notes and the *Filters Applied* sheet list what was cleared or kept on each side. If something could not be cleared on one side, the run is marked *not comparable* with the reason.
 - To export the reports exactly as saved (the old behaviour), tick **Keep the filters and slicer selections saved in the reports** in the app, or set `PBI_KEEP_PREAPPLIED_FILTERS=1`.
 
 ## Notes
