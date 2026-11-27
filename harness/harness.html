@@ -458,10 +458,15 @@
       return { title: v.title || v.name, field: fields.join(' + '), values: values };
     }
 
-    window.__clearPagePreapplied = async function() {
+    // keepPattern (optional regex text): slicers whose title or field matches are NOT cleared.
+    // Needed for slicers that must always hold a value (e.g. the period selector): clearing
+    // them blanks every period-based measure in the report.
+    window.__clearPagePreapplied = async function(keepPattern) {
+      var keepRe = null;
+      try { keepRe = keepPattern ? new RegExp(keepPattern, 'i') : null; } catch (_e) { keepRe = null; }
       var pages  = await window.__report.getPages();
       var active = pages.find(function(p) { return p.isActive; }) || pages[0];
-      var out = { page: active.displayName, pageFiltersCleared: 0, slicersCleared: [], errors: [], pageFilterDetails: [], slicerDetails: [] };
+      var out = { page: active.displayName, pageFiltersCleared: 0, slicersCleared: [], errors: [], pageFilterDetails: [], slicerDetails: [], slicersKept: [] };
       try {
         var existing = await active.getFilters();
         out.pageFiltersCleared = (existing || []).length;
@@ -480,6 +485,13 @@
         try {
           var state = await v.getSlicerState();
           var hasSelection = state && state.filters && state.filters.length > 0;
+          if (hasSelection && keepRe) {
+            var det = describeSlicerState(v, state);
+            if (keepRe.test(det.field) || keepRe.test(det.title || '')) {
+              out.slicersKept.push(det);
+              continue;
+            }
+          }
           if (hasSelection) {
             out.slicerDetails.push(describeSlicerState(v, state));
             await v.setSlicerState({ filters: [] });

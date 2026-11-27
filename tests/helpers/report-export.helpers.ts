@@ -541,7 +541,7 @@ export interface FilterRecord {
   /** Field as "Table.Column" (and the slicer's title when it has one). */
   field:  string;
   values: string[];
-  /** 'Cleared (was saved in the report)' | 'Applied by you' | 'Active after applying (read-back)' */
+  /** 'Cleared (was saved in the report)' | 'Kept as saved (slicer needs a value)' | 'Applied by you' | 'Active after applying (read-back)' */
   what:   string;
 }
 
@@ -939,7 +939,7 @@ export function writeFiltersSheet(wb: ExcelJS.Workbook, meta: ParitySummaryMeta)
     const hdr = put(['Report', 'Page', 'Level', 'Field', 'Value(s)', 'What happened'], E_HDR, true);
     hdr.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; });
     for (const rec of recs) {
-      const fill = rec.what.startsWith('Cleared') ? E_WARN_LT : rec.what.startsWith('Applied') ? E_INFO_LT : E_PASS_LT;
+      const fill = rec.what.startsWith('Cleared') ? E_WARN_LT : rec.what.startsWith('Applied') || rec.what.startsWith('Kept') ? E_INFO_LT : E_PASS_LT;
       put([rec.report, rec.page, rec.level, rec.field, rec.values.length ? rec.values.join(', ') : '', rec.what], fill);
     }
   }

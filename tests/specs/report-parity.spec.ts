@@ -58,6 +58,7 @@ import {
   globalFiltersEnabled,
   getForPageCI,
   coerceFilterValues,
+  keepSlicerPattern,
   type SlicerScenario,
 } from '../helpers/slicer-config.helpers';
 import { setSlicerSelection, setGlobalFieldFilters, clearGlobalFilters, setPageFieldFilters, clearReportPreapplied, clearPagePreapplied, readActiveFilters, readReportFilters } from '../helpers/harness.helpers';
@@ -396,6 +397,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
   const SIDE_LABEL = { source: 'Source (old report)', target: 'Target (new report)' } as const;
   const CLEARED = 'Cleared (was saved in the report)';
   const ACTIVE  = 'Active after applying (read-back)';
+  const KEPT    = 'Kept as saved (slicer needs a value)';
 
   const makeHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target', clear: ClearStats) => {
     const inner = makeScenarioHooks(sc, filterIssues, side, clear.records);
@@ -422,10 +424,14 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
       },
       perPageHook: async (p: import('@playwright/test').Page, pageDisplayName: string): Promise<void> => {
         try {
-          const r = await clearPagePreapplied(p);
+          const r = await clearPagePreapplied(p, keepSlicerPattern());
           clear.pageFilters += r.pageFiltersCleared;
           clear.slicers += r.slicersCleared.length;
           for (const f of r.pageFilterDetails ?? []) clear.records.push({ report, page: pageDisplayName, level: 'Page', field: f.field, values: f.values, what: CLEARED });
+          for (const s of r.slicersKept ?? []) {
+            clear.records.push({ report, page: pageDisplayName, level: 'Slicer', field: s.field ? `${s.title} (${s.field})` : s.title, values: s.values, what: KEPT });
+            console.log(`      · kept slicer "${s.title}" on "${pageDisplayName}" as saved: ${s.values.join(', ')} (it needs a value)`);
+          }
           for (const s of r.slicerDetails ?? []) clear.records.push({ report, page: pageDisplayName, level: 'Slicer', field: s.field ? `${s.title} (${s.field})` : s.title, values: s.values, what: CLEARED });
           if (r.pageFiltersCleared > 0 || r.slicersCleared.length > 0) {
             clear.pages.add(pageDisplayName);
@@ -658,6 +664,15 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
     const caveats: string[] = [...preflightCaveats];
     for (const i of srcFilterIssues) {
       caveats.push(`Filter application FAILED on SOURCE page "${i.page}" — that page was exported UNFILTERED on the source side. (${i.error})`);
+    }
+    {
+      // A period slicer that was left as saved can differ between the reports (e.g. "12-22" vs "Last Available Period").
+      const keptBy = (recs: FilterRecord[]) => new Map(recs.filter(r => r.what.startsWith('Kept')).map(r => [r.page, r.values.join(', ')] as const));
+      const ks = keptBy(srcClear.records), kt = keptBy(tgtClear.records);
+      for (const [pg, sv] of ks) {
+        const tv = kt.get(pg);
+        if (tv !== undefined && tv !== sv) caveats.push(`A slicer that must keep a value was left as saved and differs between the reports on page "${pg}" — source: ${sv}; target: ${tv}. Period-based numbers are not like-for-like on that page.`);
+      }
     }
     for (const [label, cs] of [['SOURCE', srcClear], ['TARGET', tgtClear]] as const) {
       for (const i of cs.issues) {

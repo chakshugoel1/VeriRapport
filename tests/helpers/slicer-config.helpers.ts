@@ -296,6 +296,19 @@ export function coerceFilterValues(values: string[], kind: string | undefined): 
   return cleaned.map(v => Number(v));
 }
 
+/**
+ * Regex text (case-insensitive) for slicers that must NOT be cleared before an
+ * export: the period selector always needs a value, and clearing it blanks every
+ * "last period" measure. Matched against the slicer's field and title.
+ * Default "period". Set PBI_KEEP_SLICER_FIELDS to another regex, or to "none"
+ * to clear every slicer as before. Returns undefined when nothing is kept.
+ */
+export function keepSlicerPattern(): string | undefined {
+  const raw = (process.env['PBI_KEEP_SLICER_FIELDS'] ?? '').trim();
+  if (raw.toLowerCase() === 'none') return undefined;
+  return raw || 'period';
+}
+
 /** Filesystem-safe version of a scenario name, for output subfolders. */
 export function scenarioSlug(name: string): string {
   return name.trim().replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'scenario';

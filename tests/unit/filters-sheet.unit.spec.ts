@@ -43,3 +43,24 @@ test('Filters Applied sheet says so when nothing was recorded', () => {
   const rows = textOf(wb.getWorksheet('Filters Applied')!).map(r => r.join(' '));
   expect(rows.some(r => r.includes('Nothing was recorded'))).toBe(true);
 });
+
+import { keepSlicerPattern } from '../helpers/slicer-config.helpers';
+
+test('keepSlicerPattern defaults to "period" and can be switched off', () => {
+  const old = process.env['PBI_KEEP_SLICER_FIELDS'];
+  try {
+    delete process.env['PBI_KEEP_SLICER_FIELDS'];
+    expect(keepSlicerPattern()).toBe('period');
+    process.env['PBI_KEEP_SLICER_FIELDS'] = 'none';
+    expect(keepSlicerPattern()).toBeUndefined();
+    process.env['PBI_KEEP_SLICER_FIELDS'] = 'PERIOD|MONTH';
+    expect(keepSlicerPattern()).toBe('PERIOD|MONTH');
+    // the default pattern matches both reports' period slicer fields
+    const re = new RegExp('period', 'i');
+    expect(re.test('KEY_FIGURES_TBL_EC_Unpivot.PERIOD_NAME_DATE_FOR_SLICER')).toBe(true);
+    expect(re.test('KEY_FIGURES_TBL.C_PERIOD_NAME_DATE')).toBe(true);
+    expect(re.test('PV_GLOBAL_PARAMETERS_TBL.PROJECT_STATUS_CODE')).toBe(false);
+  } finally {
+    if (old === undefined) delete process.env['PBI_KEEP_SLICER_FIELDS']; else process.env['PBI_KEEP_SLICER_FIELDS'] = old;
+  }
+});

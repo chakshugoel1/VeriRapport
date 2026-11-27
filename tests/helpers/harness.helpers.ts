@@ -637,6 +637,8 @@ export interface PreappliedClearResult {
   pageFilterDetails?: FilterDetail[];
   /** What the cleared slicer selections were (title, field, values). */
   slicerDetails?: SlicerDetail[];
+  /** Slicers with a selection that were deliberately NOT cleared (see keepPattern). */
+  slicersKept?: SlicerDetail[];
 }
 
 export interface ActiveFiltersResult {
@@ -675,8 +677,8 @@ export async function clearReportPreapplied(page: Page): Promise<number> {
  * (visual-level filters and row-level security are left alone). Waits for
  * the page to redraw only when something was actually cleared.
  */
-export async function clearPagePreapplied(page: Page): Promise<PreappliedClearResult> {
-  const res = await page.evaluate((): Promise<PreappliedClearResult> => (window as any).__clearPagePreapplied());
+export async function clearPagePreapplied(page: Page, keepPattern?: string): Promise<PreappliedClearResult> {
+  const res = await page.evaluate((kp: string | undefined): Promise<PreappliedClearResult> => (window as any).__clearPagePreapplied(kp), keepPattern);
   if (res.pageFiltersCleared > 0 || res.slicersCleared.length > 0) await page.waitForTimeout(SLICER_SETTLE_MS);
   return res;
 }
