@@ -280,6 +280,22 @@ export function selectionsForSide<T extends { side?: 'source' | 'target' }>(
   return selections.filter(s => !s.side || s.side === side);
 }
 
+/**
+ * Converts picked filter values to the column's real kind before they are sent
+ * to Power BI. Discovery reads every option as TEXT, but a Basic filter on a
+ * NUMERIC column only matches numbers: sending "1065110" (text) to a whole-
+ * number column silently matches nothing and empties the page. When the
+ * column is known to be numeric and every value looks like a plain number,
+ * they are sent as numbers; otherwise they are left exactly as they were.
+ */
+export function coerceFilterValues(values: string[], kind: string | undefined): Array<string | number> {
+  if (kind !== 'number') return values;
+  const NUM = /^-?\d+(\.\d+)?$/;
+  const cleaned = values.map(v => String(v).trim());
+  if (!cleaned.every(v => NUM.test(v))) return values;
+  return cleaned.map(v => Number(v));
+}
+
 /** Filesystem-safe version of a scenario name, for output subfolders. */
 export function scenarioSlug(name: string): string {
   return name.trim().replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'scenario';

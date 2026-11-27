@@ -57,6 +57,7 @@ import {
   planFilterApplication,
   globalFiltersEnabled,
   getForPageCI,
+  coerceFilterValues,
   type SlicerScenario,
 } from '../helpers/slicer-config.helpers';
 import { setSlicerSelection, setGlobalFieldFilters, clearGlobalFilters, setPageFieldFilters, clearReportPreapplied, clearPagePreapplied, readActiveFilters, readReportFilters } from '../helpers/harness.helpers';
@@ -244,6 +245,11 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
   // mismatch recorded as a caveat in the summary either way).
   const FIELD_MISMATCH_POLICY = (process.env['PBI_FILTER_FIELD_MISMATCH'] ?? 'abort').trim().toLowerCase();
   const preflightCaveats: string[] = [];
+  // Column kind (number/text) per side, learned by the pre-flight probe below:
+  // "source|Table|Column" -> 'number' | 'text' | ... Used to send filter values
+  // with the column's real type (see coerceFilterValues).
+  const fieldKinds = new Map<string, string>();
+  const kindKey = (side: 'source' | 'target', t?: { table?: string; column?: string }) => `${side}|${t?.table ?? ''}|${t?.column ?? ''}`;
   if (configuredScenarios.length > 0) {
     const flatFieldKey = (t: { table?: string; column?: string }) => `${t.table}${t.column}`;
     // Tracks which side(s) each field actually needs validating against. A
@@ -297,7 +303,8 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
               console.warn(`    ? cannot pre-validate fields against the ${sideName} dataset (${res.detail ?? 'probe failed'}) - continuing without validation for that side.`);
             }
           } else {
-            console.log(`    + '${f.table}'[${f.column}] exists in ${sideName} dataset`);
+            if (res.valueKind) fieldKinds.set(kindKey(sideKey, f), res.valueKind);
+            console.log(`    + '${f.table}'[${f.column}] exists in ${sideName} dataset` + (res.valueKind && res.valueKind !== 'unknown' ? ` (${res.valueKind} column)` : ''));
           }
         }
       }
@@ -478,7 +485,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
       // report.setFilters() REPLACES the whole filter set every time it's
       // called — calling it once per field would silently wipe out every
       // field applied before the last one.
-      const specs = plan.global.map(g => ({ target: g.targets[0], values: g.values }));
+      const specs = plan.global.map(g => ({ target: g.targets[0], values: coerceFilterValues(g.values, fieldKinds.get(kindKey(side, g.targets[0]))) }));
       const labelFor = (g: typeof plan.global[number]) => g.targets.map(t => `${t.table}.${t.column}`).join('+');
       console.log(`      · GLOBAL filters (all pages): ${plan.global.map(g => `${labelFor(g)}=[${g.values.join(', ')}]`).join('; ')}`);
       for (const g of plan.global) records?.push({ report: sideLabel, page: 'All pages', level: 'Report', field: labelFor(g), values: g.values, what: APPLIED });
@@ -533,7 +540,9 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         // count for the exact same visual between separate embed sessions,
         // so re-deriving hierarchy-ness live is not reliable; trust what
         // discovery already established instead.
-        await setSlicerSelection(p, sel.visualName!, sel.values, sel.isHierarchy, sel.targets);
+        await setSlicerSelection(p, sel.visualName!,
+          sel.isHierarchy ? sel.values : coerceFilterValues(sel.values, fieldKinds.get(kindKey(side, sel.targets?.[0]))),
+          sel.isHierarchy, sel.targets);
       }
 
       if (fieldBased.length > 0) {
@@ -541,7 +550,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         for (const s of fieldBased) records?.push({ report: sideLabel, page: pageDisplayName, level: 'Page', field: s.targets!.map(t => `${t.table}.${t.column}`).join(' + '), values: s.values, what: APPLIED });
         // This is what lets a field discovered on ONE page apply cleanly to
         // OTHER pages that may not have their own visible slicer for it.
-        await setPageFieldFilters(p, fieldBased.map(s => ({ target: s.targets![0], values: s.values })));
+        await setPageFieldFilters(p, fieldBased.map(s => ({ target: s.targets![0], values: coerceFilterValues(s.values, fieldKinds.get(kindKey(side, s.targets![0]))) })));
       }
 
       for (const sel of unmatched) {

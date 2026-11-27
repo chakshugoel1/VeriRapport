@@ -478,10 +478,10 @@ export async function readSlicerOptions(page: Page, visualName: string): Promise
  * title. Selecting multiple values acts as an OR (Power BI "In" operator).
  */
 export async function setSlicerSelection(
-  page: Page, visualName: string, values: string[],
+  page: Page, visualName: string, values: Array<string | number>,
   isHierarchy?: boolean, targets?: SlicerTarget[],
 ): Promise<void> {
-  await page.evaluate(({ name, vals, hier, tgts }: { name: string; vals: string[]; hier?: boolean; tgts?: SlicerTarget[] }) => {
+  await page.evaluate(({ name, vals, hier, tgts }: { name: string; vals: Array<string | number>; hier?: boolean; tgts?: SlicerTarget[] }) => {
     return (window as any).__setSlicerSelection(name, vals, hier, tgts);
   }, { name: visualName, vals: values, hier: isHierarchy, tgts: targets });
   await page.waitForTimeout(SLICER_SETTLE_MS);
@@ -600,8 +600,8 @@ export async function getGlobalFilters(page: Page): Promise<GlobalFilterInfo[]> 
  * call this once per field: report.setFilters() REPLACES the whole filter
  * set each time, so a second call would silently wipe out the first.
  */
-export async function setGlobalFieldFilters(page: Page, specs: Array<{ target: SlicerTarget; values: string[] }>): Promise<void> {
-  await page.evaluate((s: Array<{ target: SlicerTarget; values: string[] }>) => {
+export async function setGlobalFieldFilters(page: Page, specs: Array<{ target: SlicerTarget; values: Array<string | number> }>): Promise<void> {
+  await page.evaluate((s: Array<{ target: SlicerTarget; values: Array<string | number> }>) => {
     return (window as any).__setGlobalFilters(s);
   }, specs);
   await page.waitForTimeout(SLICER_SETTLE_MS);
@@ -614,8 +614,8 @@ export async function setGlobalFieldFilters(page: Page, specs: Array<{ target: S
  * Takes an ARRAY for the same reason as setGlobalFieldFilters above — always
  * pass every field-based selection for a page together, never one at a time.
  */
-export async function setPageFieldFilters(page: Page, specs: Array<{ target: SlicerTarget; values: string[] }>): Promise<void> {
-  await page.evaluate((s: Array<{ target: SlicerTarget; values: string[] }>) => {
+export async function setPageFieldFilters(page: Page, specs: Array<{ target: SlicerTarget; values: Array<string | number> }>): Promise<void> {
+  await page.evaluate((s: Array<{ target: SlicerTarget; values: Array<string | number> }>) => {
     return (window as any).__setPageFieldFilters(s);
   }, specs);
   await page.waitForTimeout(SLICER_SETTLE_MS);

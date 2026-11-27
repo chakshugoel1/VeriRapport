@@ -1004,25 +1004,75 @@ function renderFieldPicker(key, pick) {
   metaLine.textContent = pick.targetLabel;
   wrap.appendChild(metaLine);
 
-  // Value picker
+  // Value picker, with a search box above it for long option lists. Typing
+  // narrows the list to values containing the text (any part, upper/lower
+  // case ignored). The value already picked always stays in the list and
+  // stays picked; clearing the box (or pressing Esc) shows every value again.
+  // Display only: what gets applied is still just pick.value.
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = pick.options.length > 0 ? `Search ${pick.options.length} value(s)…` : 'No values to search';
+  search.disabled = pick.options.length === 0;
+  search.style.marginTop = '6px';
+  search.style.width = '100%';
+  search.style.padding = '6px';
+  search.style.fontSize = '12px';
+  search.setAttribute('aria-label', `Search values for ${pick.title}`);
+  wrap.appendChild(search);
+
   const select = document.createElement('select');
   select.style.marginTop = '6px';
   select.style.width = '100%';
   select.style.padding = '6px';
   select.style.fontSize = '12px';
-  const noneOpt = document.createElement('option');
-  noneOpt.value = '';
-  noneOpt.textContent = pick.options.length > 0 ? '— select a value —' : '(no values available)';
-  select.appendChild(noneOpt);
-  for (const v of pick.options) {
-    const opt = document.createElement('option');
-    opt.value = v;
-    opt.textContent = v;
-    if (v === pick.value) opt.selected = true;
-    select.appendChild(opt);
-  }
+
+  const countLine = document.createElement('div');
+  countLine.className = 'note';
+  countLine.style.marginTop = '4px';
+
+  const renderOptions = () => {
+    const q = search.value.trim().toLowerCase();
+    const shown = q ? pick.options.filter(v => String(v).toLowerCase().includes(q)) : pick.options;
+    select.innerHTML = '';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = pick.options.length === 0 ? '(no values available)'
+      : (q && shown.length === 0 ? '— no value matches your search —' : '— select a value —');
+    select.appendChild(noneOpt);
+    // Keep the current pick visible and selected even when it does not match the search.
+    if (pick.value && !shown.includes(pick.value)) {
+      const keep = document.createElement('option');
+      keep.value = pick.value;
+      keep.textContent = `${pick.value}  (picked)`;
+      keep.selected = true;
+      select.appendChild(keep);
+    }
+    for (const v of shown) {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      if (v === pick.value) opt.selected = true;
+      select.appendChild(opt);
+    }
+    countLine.textContent = q ? `Showing ${shown.length} of ${pick.options.length} value(s) matching "${search.value.trim()}".` : '';
+    countLine.style.display = q ? '' : 'none';
+  };
+  renderOptions();
+
+  search.addEventListener('input', renderOptions);
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { search.value = ''; renderOptions(); }
+    // Enter picks the only match, so a precise search needs no extra click.
+    if (e.key === 'Enter') {
+      const q = search.value.trim().toLowerCase();
+      const hits = q ? pick.options.filter(v => String(v).toLowerCase().includes(q)) : [];
+      if (hits.length === 1) { pick.value = hits[0]; renderOptions(); }
+      e.preventDefault();
+    }
+  });
   select.addEventListener('change', () => { pick.value = select.value; });
   wrap.appendChild(select);
+  wrap.appendChild(countLine);
 
   const note = document.createElement('div');
   note.className = 'note';

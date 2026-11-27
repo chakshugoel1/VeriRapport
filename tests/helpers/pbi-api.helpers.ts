@@ -343,6 +343,14 @@ export interface FieldCheckResult {
   status: FieldCheckStatus;
   /** Short diagnostic (error snippet / HTTP status) when not 'ok'. */
   detail?: string;
+  /**
+   * What kind of values the column holds, read from one sample (non-blank)
+   * value the probe returned: 'number' for a numeric column, 'text' for text,
+   * 'other' for dates/booleans, 'unknown' when there was no sample. Filters
+   * must send values of the column's own kind: a text "1065110" on a numeric
+   * column silently matches nothing.
+   */
+  valueKind?: 'number' | 'text' | 'other' | 'unknown';
 }
 
 /**
@@ -351,6 +359,21 @@ export interface FieldCheckResult {
  * or no dataset permission) — callers should treat that as "could not
  * validate", not as a failure.
  */
+/** Reads the probe's sample value type from an executeQueries result. */
+export function sampleValueKind(result: unknown): 'number' | 'text' | 'other' | 'unknown' {
+  const rows = (result as { tables?: Array<{ rows?: Array<Record<string, unknown>> }> })?.tables?.[0]?.rows;
+  const row = rows?.[0];
+  if (!row) return 'unknown';
+  const v = Object.values(row)[0];
+  if (typeof v === 'number') return 'number';
+  if (typeof v === 'string') {
+    // Dates come back as ISO strings; treat them as "other" (left unchanged).
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? 'other' : 'text';
+  }
+  if (v === null || v === undefined) return 'unknown';
+  return 'other';
+}
+
 export async function validateDatasetField(
   userToken: string,
   datasetId: string,
@@ -359,7 +382,8 @@ export async function validateDatasetField(
 ): Promise<FieldCheckResult> {
   const t = table.replace(/'/g, "''");
   const c = column.replace(/\]/g, ']]');
-  const dax = `EVALUATE TOPN(1, SELECTCOLUMNS('${t}', "v", '${t}'[${c}]))`;
+  // One NON-blank sample value: its JSON type tells us the column's kind.
+  const dax = `EVALUATE TOPN(1, FILTER(SELECTCOLUMNS('${t}', "v", '${t}'[${c}]), NOT ISBLANK([v])))`;
 
   try {
     const res = await httpsPost(
@@ -374,7 +398,7 @@ export async function validateDatasetField(
       if (inner && inner.error) {
         return { status: 'missing', detail: JSON.stringify(inner.error).slice(0, 200) };
       }
-      return { status: 'ok' };
+      return { status: 'ok', valueKind: sampleValueKind(inner) };
     }
     if (res.status === 400) {
       // 400 = the DAX itself was rejected, which for this probe means the
