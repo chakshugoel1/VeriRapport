@@ -27,6 +27,10 @@ import {
   type VisualExport,
 } from './harness.helpers';
 import { timed, recordTiming } from './timing.helpers';
+import {
+  classifyAll, tally, biggestChanges, referenceFacts, rowCapVisuals, sameFiltersAnswer, pageFilterText,
+  BUCKET_ORDER, BUCKET_ICON, BUCKET_MEANING, EXPORT_ROW_CAP, type Bucket, type ClassifiedVisual,
+} from './summary-format.helpers';
 import type { WorkbookDiffSummary, VisualBlockDiff, SheetDiffSummary } from './excel-compare.helpers';
 
 // Visual types that carry no tabular data — never written or compared.
@@ -101,6 +105,16 @@ export interface PageExportResult {
    *  = visuals[k]). Used by the mapping-file comparison to find a visual by
    *  its Power BI visual ID; ignored by the normal flow. */
   visuals?:         VisualIndexEntry[];
+  /** Visuals on this page that exported NOTHING, with the reason why. */
+  notExported?:     NotExportedEntry[];
+}
+
+/** A visual that produced no data in the export, and why. */
+export interface NotExportedEntry {
+  visualName: string;
+  title:      string;
+  type:       string;
+  reason:     string;
 }
 
 /** One data visual as written to a sheet (see PageExportResult.visuals). */
@@ -119,6 +133,8 @@ export interface VisualIndexFile {
   sheets:  Array<{
     sheetName: string; pageDisplayName: string; pageInternalName: string;
     visuals: VisualIndexEntry[];
+    /** Visuals that exported nothing, with the reason (added later; optional). */
+    notExported?: NotExportedEntry[];
   }>;
 }
 
@@ -135,6 +151,7 @@ export function writeVisualIndex(result: ReportExportResult): void {
       sheets: result.exported.map(e => ({
         sheetName: e.sheetName, pageDisplayName: e.pageDisplayName,
         pageInternalName: e.pageInternalName, visuals: e.visuals ?? [],
+        notExported: e.notExported ?? [],
       })),
     };
     fs.writeFileSync(visualIndexPathFor(result.outPath), JSON.stringify(body, null, 2), 'utf8');
@@ -392,13 +409,13 @@ export async function exportReportToWorkbook(
       recordTiming(label, `page:${rp.displayName}:exportData`, sumMs);
     }
     const tWrite = Date.now();
-    const { visualsWithData, totalRows, index } = writeVisualsToSheet(ws, visuals);
+    const { visualsWithData, totalRows, index, notExported } = writeVisualsToSheet(ws, visuals);
     ws.commit(); // flush this page's rows to disk now — don't hold them for the rest of the run
     recordTiming(label, `page:${rp.displayName}:writeSheet`, Date.now() - tWrite);
 
     exported.push({
       sheetName: wsName, pageDisplayName: rp.displayName, pageInternalName: rp.name,
-      visualsWithData, totalRows, visuals: index,
+      visualsWithData, totalRows, visuals: index, notExported,
     });
   }
 
@@ -439,10 +456,35 @@ const WIDTH_PADDING = 2;
  * Cell VALUES are written exactly as before — this has zero effect on
  * compareWorkbooks(), which reads only cell.value and ignores all styling.
  */
+/** Plain-words reason a visual wrote no data block, or null if it is written. */
+export function whyNotExported(v: VisualExport): string | null {
+  if (SKIP_TYPES.has(v.visualType)) {
+    return `Not a data visual (${v.visualType}) — nothing to export, by design`;
+  }
+  if (v.errorMessage && !/^skipped/i.test(v.errorMessage)) {
+    return `Export failed: ${v.errorMessage}`;
+  }
+  if (v.errorMessage) return v.errorMessage;
+  if (!(v.rowCount > 0)) {
+    return 'Returned 0 rows — no data for the filters used, or a hidden/pop-up visual';
+  }
+  if (!v.headers || v.headers.length === 0) return 'Returned no columns';
+  return null;
+}
+
 export function writeVisualsToSheet(
   ws: ExcelJS.Worksheet,
   visuals: VisualExport[],
-): { visualsWithData: number; totalRows: number; index: VisualIndexEntry[] } {
+): { visualsWithData: number; totalRows: number; index: VisualIndexEntry[]; notExported: NotExportedEntry[] } {
+  // Record why each visual that is NOT written exported nothing.
+  const notExported: NotExportedEntry[] = visuals
+    .map(v => ({ v, reason: whyNotExported(v) }))
+    .filter(x => x.reason !== null)
+    .map(x => ({
+      visualName: x.v.visualName, title: x.v.visualTitle || x.v.visualName,
+      type: x.v.visualType, reason: x.reason as string,
+    }));
+
   // Keep only data-bearing visuals, sorted for stable, aligned output.
   const dataVisuals = visuals
     .filter(v => !SKIP_TYPES.has(v.visualType) && v.rowCount > 0 && v.headers.length > 0)
@@ -455,7 +497,7 @@ export function writeVisualsToSheet(
     ws.getColumn(1).width = 24;
     const row = ws.addRow(['[NO DATA VISUALS]']);
     row.commit();
-    return { visualsWithData: 0, totalRows: 0, index: [] };
+    return { visualsWithData: 0, totalRows: 0, index: [], notExported };
   }
 
   // ── PASS 1: compute per-column widths from data already in memory.
@@ -519,7 +561,7 @@ export function writeVisualsToSheet(
   }
 
   return {
-    visualsWithData: dataVisuals.length, totalRows,
+    visualsWithData: dataVisuals.length, totalRows, notExported,
     index: dataVisuals.map(v => ({
       visualName: v.visualName, title: v.visualTitle || v.visualName, type: v.visualType, rows: v.rowCount,
     })),
@@ -970,124 +1012,32 @@ export async function writeParitySummary(
   wb.creator = 'VériRapport';
   wb.created = new Date();
 
-  // ── Sheet 1: Summary ──────────────────────────────────────────────────────
-  const infoWs = wb.addWorksheet('Parity Summary');
-  infoWs.columns = [{ width: 44 }, { width: 80 }];
-
-  const verdict = caveats.length > 0
-    ? `⚠️ NOT COMPARABLE — ${caveats.length} caveat(s) invalidate this run (see Caveat rows below)`
-    : passed
-      ? '✅ PASS — source and target data match'
-      : `❌ FAIL — ${differing} page(s) have genuine data/structure differences`;
-  // Visual-level tallies for the at-a-glance block and the page table.
-  const allVisuals = diff.sheets.flatMap(sh => sh.visuals);
-  const sevCount = { safe: 0, review: 0, critical: 0 };
-  let identicalVisuals = 0;
-  for (const v of allVisuals) {
-    sevCount[VISUAL_SEVERITY[v.status]]++;
-    if (v.status === 'identical') identicalVisuals++;
-  }
+  // ── Model: every visual goes into ONE plain bucket (see summary-format.helpers.ts)
+  const classified = classifyAll(diff);
+  const counts = tally(classified);
+  const filterRecs = meta.filterRecords ?? [];
+  const sameFilters = sameFiltersAnswer(filterRecs, diff.sheets.map(s => s.sheet));
+  const facts = referenceFacts(classified);
+  const capped = rowCapVisuals(classified);
   const comparedPages = diff.sheets.filter(sh => sh.inExpected && sh.inActual);
-  const passingPages = comparedPages.filter(sh => TREAT_HEADER_DIFF_AS_FAILURE ? sh.identical : sh.dataIdentical).length;
-  infoWs.properties.tabColor = { argb: caveats.length > 0 ? 'FFFFC000' : (passed ? 'FF00B050' : 'FFFF0000') };
+  const verdictKind: 'caveat' | 'pass' | 'soft' | 'fail' =
+    caveats.length > 0 ? 'caveat'
+    : counts.real > 0 ? 'fail'
+    : (counts.eye > 0 || counts.expected > 0) ? 'soft'
+    : 'pass';
+  const verdict =
+    verdictKind === 'caveat' ? `⚠️ NOT COMPARABLE — ${caveats.length} problem(s) with how this run was set up (see "Before you trust this" below)`
+    : verdictKind === 'fail' ? `❌ ${counts.real} REAL DIFFERENCE(S) found` + (counts.expected ? ` · ${counts.expected} differ as expected` : '') + (counts.eye ? ` · ${counts.eye} to check by eye` : '')
+    : verdictKind === 'soft' ? `🟡 NO REAL DIFFERENCES — ${counts.expected} differ as expected (version / dates)` + (counts.eye ? ` · ${counts.eye} to check by eye` : '')
+    : '✅ PASS — source and target data match';
+  const verdictFill = verdictKind === 'caveat' ? E_WARN : verdictKind === 'fail' ? E_FAIL : verdictKind === 'soft' ? E_WARN : E_PASS;
+  const verdictDark = verdictKind === 'fail' || verdictKind === 'pass';
 
-  const banner = infoWs.addRow([verdict, '']);
-  infoWs.mergeCells(banner.number, 1, banner.number, 2);
-  banner.height = 38;
-  banner.getCell(1).fill = caveats.length > 0 ? E_WARN : (passed ? E_PASS : E_FAIL);
-  banner.getCell(1).font = { bold: true, size: 16, color: { argb: caveats.length > 0 ? 'FF000000' : 'FFFFFFFF' } };
-  banner.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-  const glanceRows: Array<[string, string, ExcelJS.Fill | undefined]> = [
-    ['Pages matching',            `${passingPages} of ${comparedPages.length}`, passingPages === comparedPages.length ? E_PASS_LT : E_FAIL_LT],
-    ['Visuals checked one by one', String(allVisuals.length) + (allVisuals.length === 0 ? ' (every page matched at the fast whole-page check)' : ''), undefined],
-    ['  ✅ Identical',             String(identicalVisuals), E_PASS_LT],
-    ['  📝 Cosmetic only (label / copy count)', String(sevCount.safe - identicalVisuals), E_INFO_LT],
-    ['  ❓ Needs manual review',   String(sevCount.review), sevCount.review > 0 ? E_WARN_LT : undefined],
-    ['  ❌ Critical (data differs or visual missing/extra)', String(sevCount.critical), sevCount.critical > 0 ? E_FAIL_LT : E_PASS_LT],
-  ];
-  for (const [label, value, fill] of glanceRows) {
-    const r = infoWs.addRow([label, value]);
-    r.getCell(1).font = { bold: true };
-    r.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle', wrapText: true }; });
-    if (fill) r.getCell(2).fill = fill;
-    r.getCell(2).font = { bold: true, size: 12 };
-  }
-  const guide = infoWs.addRow(['Where to look', 'Page Comparison → which pages fail.  Visual Comparison → which visuals.  Changed Values → which cell changed, from what to what (with % change).  Differences → rows that exist on one side only.']);
-  guide.getCell(1).font = { bold: true };
-  guide.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle', wrapText: true }; });
-  guide.height = 48;
-  infoWs.addRow(['', '']);
-
-  // Analysis narrative FIRST — the plain-English "do I need to worry about
-  // this" answer a reviewer wants before any raw counts. Purely derived from
-  // stats computed below; never a second source of truth.
-  const analysisStats = computeAnalysisStats(diff);
-  const analysisLines = buildAnalysisNarrative(diff, analysisStats, passed, caveats);
-  const analysisHeaderRow = infoWs.addRow(['📋 Analysis', '']);
-  infoWs.mergeCells(analysisHeaderRow.number, 1, analysisHeaderRow.number, 2);
-  analysisHeaderRow.getCell(1).fill = E_HDR;
-  analysisHeaderRow.getCell(1).font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
-  analysisHeaderRow.getCell(1).alignment = { vertical: 'middle' };
-  analysisHeaderRow.height = 22;
-  for (const line of analysisLines) {
-    const r = infoWs.addRow([line, '']);
-    infoWs.mergeCells(r.number, 1, r.number, 2);
-    const c = r.getCell(1);
-    c.font = { italic: true };
-    c.alignment = { vertical: 'middle', wrapText: true };
-    c.fill = E_INFO;
-    r.height = 32;
-  }
-  infoWs.addRow(['', '']); // spacer before the raw stats table below
-
-  const rows: [string, string][] = [
-    ['Pair',                meta.pairName],
-    ['Run Mode',            meta.mode],
-    // Pinned locale + named month: a bare .toLocaleString() renders in
-    // whichever OS locale ran the script (dd/mm vs mm/dd is genuinely
-    // ambiguous across countries) - this way the summary reads the same
-    // regardless of who generated it or where.
-    ['Run Time',            new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' })],
-    [`Source (${meta.sourceLabel})`, meta.sourceReportId],
-    [`Target (${meta.targetLabel})`, meta.targetReportId],
-    ['Expected File',       meta.expectedFile],
-    ['Actual File',         meta.actualFile],
-    ['Pages Compared',      String(diff.sheets.filter(s => s.inExpected && s.inActual).length)],
-    ['Pages Fully Identical (strict)', String(diff.sheets.filter(s => s.identical).length)],
-    ['Pages With Only Header-Text/Order Diffs', String(diff.sheets.filter(s => !s.identical && s.dataIdentical).length)],
-    ['Pages With Real Data/Structure Diffs', String(differing)],
-    ['Pages Only in Source', diff.sheetsOnlyInExpected.join(', ') || '(none)'],
-    ['Pages Only in Target', diff.sheetsOnlyInActual.join(', ') || '(none)'],
-    ['Header-Only Visual Diffs (see Visual Comparison)', String(totalHeaderDiffs)],
-    ['Structural Visual Diffs — missing/duplicated/ambiguous (see Visual Comparison)', String(totalStructuralDiffs)],
-    ['Header diffs count as failure?', TREAT_HEADER_DIFF_AS_FAILURE ? 'Yes' : 'No — see TREAT_HEADER_DIFF_AS_FAILURE'],
-  ];
-  if (meta.mappingFile) {
-    rows.push(['Mapping file', meta.mappingFile]);
-    const byType = new Map<string, number>();
-    for (const sh of diff.sheets) for (const v of sh.visuals) {
-      if (v.mapping) byType.set(v.mapping.changeLabel, (byType.get(v.mapping.changeLabel) ?? 0) + 1);
-    }
-    for (const [label, n] of byType) rows.push([`  Mapped visuals — ${label}`, String(n)]);
-  }
-  if (meta.pageAlignment) {
-    rows.push(['Report Pages In Both Reports', String(meta.pageAlignment.inBothCount)]);
-    rows.push(['Report Pages Only In Source Report', meta.pageAlignment.onlyInSource.join(', ') || '(none)']);
-    rows.push(['Report Pages Only In Target Report', meta.pageAlignment.onlyInTarget.join(', ') || '(none)']);
-  }
-  (meta.notes ?? []).forEach((n, i) => rows.push([`ℹ Note ${i + 1}`, n]));
-  caveats.forEach((c, i) => rows.push([`⚠ Caveat ${i + 1}`, c]));
-  rows.push(['Overall Result', verdict]);
-  let verdictRow: ExcelJS.Row | undefined;
-  rows.forEach(([label, value]) => {
-    const r = infoWs.addRow([label, value]);
-    r.getCell(1).font = { bold: true };
-    r.getCell(1).fill = label.startsWith('⚠ Caveat') ? E_WARN : E_INFO;
-    r.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle', wrapText: true }; });
-    if (label === 'Overall Result') verdictRow = r;
-  });
-  verdictRow!.getCell(2).fill = caveats.length > 0 ? E_WARN : (passed ? E_PASS : E_FAIL);
-  verdictRow!.getCell(2).font = { bold: true, color: { argb: caveats.length > 0 ? 'FF000000' : 'FFFFFFFF' } };
+  // Sheets are created in reading order: summary first, details after.
+  const glanceWs = wb.addWorksheet('At a glance');
+  const whatWs = wb.addWorksheet('What differs');
+  const visWs = wb.addWorksheet('All visuals');
+  glanceWs.properties.tabColor = { argb: verdictDark ? (verdictKind === 'pass' ? 'FF00B050' : 'FFFF0000') : 'FFFFC000' };
 
   const styleHeader = (ws: ExcelJS.Worksheet, cols: number) => {
     ws.getRow(1).eachCell(c => {
@@ -1109,167 +1059,191 @@ export async function writeParitySummary(
     return parseFloat(t);
   };
 
-  // ── Sheet 2: Page Comparison ──────────────────────────────────────────────
-  // Worst pages first, so the problems are at the top of the list.
-  const pageRank = (sh: typeof diff.sheets[number]) =>
-    (!sh.inExpected || !sh.inActual) ? 0 : !sh.dataIdentical ? 1 : !sh.identical ? 2 : 3;
-  const pagesOrdered = diff.sheets.slice().sort((x, y) => pageRank(x) - pageRank(y));
-
-  // ── Sheet: Filters Applied ────────────────────────────────────────────────
-  // Which filters/slicers were found, cleared, applied and really active on
-  // each report when this comparison ran.
-  writeFiltersSheet(wb, meta);
-
-  const cmpWs = wb.addWorksheet('Page Comparison');
-  cmpWs.columns = [
-    { header: 'Page (Sheet)',            key: 'sheet',   width: 30 },
-    { header: 'Status',                  key: 'status',  width: 30 },
-    { header: 'Visuals checked',         key: 'vis',     width: 11 },
-    { header: '✅ Identical',            key: 'ident',   width: 11 },
-    { header: '❓ Review',               key: 'review',  width: 10 },
-    { header: '❌ Critical',             key: 'crit',    width: 10 },
-    { header: 'Visuals matching',        key: 'pct',     width: 12 },
-    { header: 'Rows in Source',          key: 'exp',     width: 12 },
-    { header: 'Rows in Target',          key: 'act',     width: 12 },
-    { header: 'Rows differing (approx.)', key: 'rowsDiff', width: 16 },
-  ];
-  styleHeader(cmpWs, cmpWs.columns.length);
-  const pageCells = new Map<string, ExcelJS.Cell>();
-  for (const s of pagesOrdered) {
-    let statusText: string;
-    let statusFill: ExcelJS.Fill;
-    if (s.inExpected && !s.inActual) { statusText = '⚠️ Missing in Target'; statusFill = E_WARN; }
-    else if (!s.inExpected && s.inActual) { statusText = '🆕 Only in Target'; statusFill = E_WARN; }
-    else if (s.identical) { statusText = '✅ Identical'; statusFill = E_PASS; }
-    else if (s.dataIdentical) { statusText = '📝 Data OK — header text/order differs'; statusFill = E_INFO; }
-    else { statusText = '❌ Different'; statusFill = E_FAIL; }
-
-    const nVis = s.visuals.length;
-    const nIdent = s.visuals.filter(v => v.status === 'identical').length;
-    const nRev = s.visuals.filter(v => VISUAL_SEVERITY[v.status] === 'review').length;
-    const nCrit = s.visuals.filter(v => VISUAL_SEVERITY[v.status] === 'critical').length;
-    const nSafe = s.visuals.filter(v => VISUAL_SEVERITY[v.status] === 'safe').length;
-    const fast = nVis === 0 && s.identical;                 // matched at the whole-page hash; no per-visual list
-    const row = cmpWs.addRow({
-      sheet: s.sheet,
-      status: statusText,
-      vis: fast ? 'all' : nVis,
-      ident: fast ? 'all' : nIdent,
-      review: nVis === 0 ? '' : nRev,
-      crit: nVis === 0 ? '' : nCrit,
-      pct: fast ? 1 : (nVis === 0 ? '' : nSafe / nVis),
-      exp: s.rowsExpected,
-      act: s.rowsActual,
-      rowsDiff: s.rowsOnlyInExpected + s.rowsOnlyInActual,
-    });
-    row.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle' }; });
-    row.getCell('pct').numFmt = '0%';
-    const sc = row.getCell('status');
-    sc.fill = statusFill;
-    sc.font = { bold: true, color: { argb: dark(statusFill) ? 'FFFFFFFF' : 'FF000000' } };
-    sc.alignment = { horizontal: 'center', vertical: 'middle' };
-    if (nCrit > 0) row.getCell('crit').fill = E_FAIL_LT;
-    if (nRev > 0) row.getCell('review').fill = E_WARN_LT;
-    pageCells.set(s.sheet, row.getCell('sheet'));
-  }
-  cmpWs.addConditionalFormatting({
-    ref: `G2:G${Math.max(2, cmpWs.rowCount)}`,
-    rules: [{ type: 'dataBar', priority: 1, cfvo: [{ type: 'num', value: 0 }, { type: 'num', value: 1 }],
-              color: { argb: 'FF63BE7B' }, gradient: false } as any],
-  });
-
-  // ── Sheet 3: Visual Comparison (one row per Power BI visual, per page) ────
-  // The actionable sheet: which visual on which page has a problem and what
-  // kind. Within each page the worst problems are listed first.
-  const SEV_RANK: Record<Severity, number> = { critical: 0, review: 1, safe: 2 };
-  const visWs = wb.addWorksheet('Visual Comparison');
-  // Mapping-file mode adds four columns right after Status. Absent otherwise,
-  // so the sheet is identical to before for a normal (no mapping) run.
-  const hasMapping = pagesOrdered.some(s => s.visuals.some(v => v.mapping));
-  const mappingCols = hasMapping ? [
-    { header: 'Change type',    key: 'changeType', width: 30 },
-    { header: 'Old visual ID',  key: 'oldId',      width: 24 },
-    { header: 'New visual ID',  key: 'newId',      width: 24 },
-    { header: 'Why changed (mapping file)', key: 'mapReason', width: 50 },
-  ] : [];
-  visWs.columns = [
-    { header: 'Page (Sheet)',   key: 'sheet',   width: 24 },
-    { header: 'Visual Title',   key: 'title',   width: 34 },
-    { header: 'Type',           key: 'type',    width: 18 },
-    { header: 'Severity',       key: 'severity',width: 26 },
-    { header: 'Status',         key: 'status',  width: 30 },
-    ...mappingCols,
-    { header: 'Rows Source',    key: 'rowsE',   width: 10 },
-    { header: 'Rows Target',    key: 'rowsA',   width: 10 },
-    { header: 'Rows Δ',         key: 'rowsD',   width: 9 },
-    { header: 'Rows differing', key: 'differ',  width: 11 },
-    { header: 'Copies (Src/Tgt)', key: 'counts', width: 11 },
-    { header: 'Details',        key: 'details', width: 16 },
-    { header: 'What differs',   key: 'note',    width: 70 },
-    { header: 'Header (Source)', key: 'hdrExp', width: 34 },
-    { header: 'Header (Target)', key: 'hdrAct', width: 34 },
-  ];
-  styleHeader(visWs, visWs.columns.length);
-
-  const visCells = new Map<VisualBlockDiff, ExcelJS.Row>();
-  const firstVisRowOfPage = new Map<string, number>();
-  let anyVisualRows = false;
-  for (const s of pagesOrdered) {
-    const ordered = s.visuals.slice().sort((x, y) => SEV_RANK[VISUAL_SEVERITY[x.status]] - SEV_RANK[VISUAL_SEVERITY[y.status]]);
-    for (const v of ordered) {
-      anyVisualRows = true;
-      const severity = VISUAL_SEVERITY[v.status];
-      const row = visWs.addRow({
-        sheet: s.sheet,
-        title: v.title,
-        type: v.type,
-        severity: SEVERITY_LABEL[severity],
-        status: VISUAL_STATUS_LABEL[v.status],
-        changeType: v.mapping?.changeLabel ?? '',
-        oldId: v.mapping?.oldVisualId ?? '',
-        newId: v.mapping?.newVisualId ?? '',
-        mapReason: v.mapping ? [v.mapping.reason, v.mapping.fieldsDropped ? `Fields dropped: ${v.mapping.fieldsDropped}` : ''].filter(Boolean).join(' — ') : '',
-        rowsE: v.rowsExpected,
-        rowsA: v.rowsActual,
-        rowsD: v.rowsActual - v.rowsExpected,
-        differ: v.onlyInExpectedCount + v.onlyInActualCount,
-        counts: `${v.countExpected} / ${v.countActual}`,
-        details: '',
-        note: v.note ?? '',
-        hdrExp: v.headerExpected.join(' | '),
-        hdrAct: v.headerActual.join(' | '),
-      });
-      if (!firstVisRowOfPage.has(s.sheet)) firstVisRowOfPage.set(s.sheet, row.number);
-      visCells.set(v, row);
-      // Whole-row tint by severity, then the severity/status cells get a bolder fill.
-      const rowFill = rowFillFor(v.status);
-      row.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'top', wrapText: true }; c.fill = rowFill; });
-      const sevCell = row.getCell('severity');
-      sevCell.fill = SEVERITY_CELL_FILL[severity];
-      sevCell.font = { bold: true, color: { argb: severity === 'critical' ? 'FFFFFFFF' : 'FF000000' } };
-      const sc = row.getCell('status');
-      const fill = VISUAL_STATUS_FILL[v.status];
-      sc.fill = fill;
-      sc.font = { bold: true, color: { argb: (fill === E_WARN || fill === E_INFO || fill === E_MISS) ? 'FF000000' : 'FFFFFFFF' } };
-      if (v.rowsActual !== v.rowsExpected) row.getCell('rowsD').font = { bold: true, color: { argb: 'FFC00000' } };
-      row.getCell('rowsD').numFmt = '+0;-0;0';
+  const whatRows = new Map<VisualBlockDiff, ExcelJS.Row>();
+  const BUCKET_RANK = new Map(BUCKET_ORDER.map((b, i) => [b, i] as const));
+  const bucketFill: Record<Bucket, ExcelJS.Fill> = { real: E_FAIL_LT, eye: E_WARN_LT, expected: E_INFO_LT, na: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } }, match: E_PASS_LT };
+  const bigNum = (c: ClassifiedVisual): number => {
+    let m = 0;
+    for (const cr of c.v.changedRows ?? []) for (const ch of cr.changes) {
+      const e = num(ch.expected), a = num(ch.actual);
+      if (e !== null && a !== null) m = Math.max(m, Math.abs(a - e));
     }
-  }
-  if (!anyVisualRows) {
-    visWs.addRow(['(No per-visual breakdown — every page matched at the fast whole-sheet check.)']);
-  }
+    return m;
+  };
 
-  // ── Sheet 4: Differences — one box per differing visual ───────────────────
-  // Original (source) and Changed (target) are shown as the SAME columns,
-  // one above the other, with the changed cells highlighted and a Difference
-  // line underneath. Rows that exist on only one side are labelled as such.
   const problemVisuals: Array<{ sheet: string; visual: VisualBlockDiff }> = [];
-  for (const s of pagesOrdered) {
-    for (const v of s.visuals.slice().sort((x, y) => SEV_RANK[VISUAL_SEVERITY[x.status]] - SEV_RANK[VISUAL_SEVERITY[y.status]])) {
-      if (!visualDataMatches(v.status)) problemVisuals.push({ sheet: s.sheet, visual: v });
-    }
+  for (const c of classified.slice().sort((x, y) => BUCKET_RANK.get(x.bucket)! - BUCKET_RANK.get(y.bucket)!)) {
+    if (!visualDataMatches(c.v.status)) problemVisuals.push({ sheet: c.sheet, visual: c.v });
   }
   const detailFirstRow = new Map<VisualBlockDiff, { sheetName: string; row: number }>();
+
+  // ── Sheet 3: All visuals — one row per visual, worst first ────────────────
+  visWs.columns = [
+    { header: 'Page',                         key: 'sheet',  width: 24 },
+    { header: 'Visual',                       key: 'title',  width: 34 },
+    { header: 'Type',                         key: 'type',   width: 16 },
+    { header: 'Result',                       key: 'result', width: 28 },
+    { header: 'What differs',                 key: 'note',   width: 60 },
+    { header: 'Rows (old report)',            key: 'rowsE',  width: 11 },
+    { header: 'Rows (new report)',            key: 'rowsA',  width: 11 },
+    { header: 'How it was paired',            key: 'paired', width: 28 },
+    { header: 'Why it came back empty',       key: 'empty',  width: 58 },
+    { header: 'Details',                      key: 'details',width: 16 },
+  ];
+  styleHeader(visWs, visWs.columns.length);
+  const visRows = new Map<VisualBlockDiff, ExcelJS.Row>();
+  const firstVisRowOfPage = new Map<string, number>();
+  const orderedVisuals = classified.slice().sort((x, y) =>
+    BUCKET_RANK.get(x.bucket)! - BUCKET_RANK.get(y.bucket)! || x.sheet.localeCompare(y.sheet) || x.v.title.localeCompare(y.v.title));
+  for (const c of orderedVisuals) {
+    const v = c.v;
+    const row = visWs.addRow({
+      sheet: c.sheet, title: v.title, type: v.type, result: c.result,
+      note: v.note ?? '', rowsE: v.rowsExpected, rowsA: v.rowsActual,
+      paired: c.paired, empty: c.emptyReason, details: '',
+    });
+    visRows.set(v, row);
+    if (!firstVisRowOfPage.has(c.sheet)) firstVisRowOfPage.set(c.sheet, row.number);
+    row.eachCell(cell => { cell.border = E_CB; cell.alignment = { vertical: 'top', wrapText: true }; cell.fill = bucketFill[c.bucket]; });
+    row.getCell('result').font = { bold: true };
+    if (v.rowsActual !== v.rowsExpected) row.getCell('rowsA').font = { bold: true, color: { argb: 'FFC00000' } };
+  }
+  if (classified.length === 0) {
+    visWs.addRow(['(No per-visual breakdown — every page matched at the fast whole-sheet check.)']);
+  }
+  visWs.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: visWs.columns.length } };
+
+  // ── Sheet 2: What differs — real differences only ─────────────────────────
+  {
+    const W = 8;
+    whatWs.columns = [{ width: 24 }, { width: 34 }, { width: 16 }, { width: 60 }, { width: 11 }, { width: 11 }, { width: 14 }, { width: 18 }];
+    const wLine = (text: string, fill?: ExcelJS.Fill, bold = false, h?: number) => {
+      const r = whatWs.addRow([text]);
+      whatWs.mergeCells(r.number, 1, r.number, W);
+      const c = r.getCell(1);
+      c.alignment = { vertical: 'middle', wrapText: true };
+      if (fill) c.fill = fill;
+      if (bold) c.font = { bold: true };
+      if (h) r.height = h;
+      return r;
+    };
+    const reals = classified.filter(c => c.bucket === 'real');
+    wLine('What differs — real differences only', E_HDR, true, 26).getCell(1).font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    if (reals.length === 0) {
+      wLine('No real differences were found. Items that differ as expected, were empty, or need a look by eye are on "All visuals".', E_PASS_LT, true, 30);
+    } else {
+      wLine(`${reals.length} visual(s) have a real difference. Each shows the old report's value, the new report's value, and how far apart they are.`, undefined, false, 22);
+      const big = biggestChanges(classified, 3);
+      if (big.length) {
+        wLine('The biggest changes', E_INFO, true);
+        big.forEach((b, i) => wLine(`${i + 1}.  ${b.sheet} › ${b.visual} › ${b.column}${b.key ? ` (${b.key})` : ''}:  ${b.oldValue}  →  ${b.newValue}   (${b.delta > 0 ? '+' : ''}${Math.round(b.delta * 100) / 100})`));
+      }
+      whatWs.addRow([]);
+      const hdr = whatWs.addRow(['Page', 'Visual', 'Type', 'What differs', 'Rows (old)', 'Rows (new)', 'Values changed', 'Details']);
+      hdr.eachCell(c => { c.fill = E_HDR; c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.border = E_CB; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
+      for (const c of reals.slice().sort((x, y) => bigNum(y) - bigNum(x))) {
+        const v = c.v;
+        const r = whatWs.addRow([c.sheet, v.title, v.type, v.note || c.result, v.rowsExpected, v.rowsActual, v.changedRowCount ?? '', '']);
+        r.eachCell(cell => { cell.border = E_CB; cell.alignment = { vertical: 'top', wrapText: true }; cell.fill = E_FAIL_LT; });
+        whatRows.set(v, r);
+      }
+    }
+  }
+  // ── Sheet 4: Changed values — every changed cell, biggest change first ───
+  const changedVisuals = problemVisuals.filter(({ visual }) => (visual.changedRows?.length ?? 0) > 0);
+  if (changedVisuals.length > 0) {
+    const cWs = wb.addWorksheet('Changed values');
+    cWs.columns = [
+      { header: 'Page',           key: 'sheet',  width: 22 },
+      { header: 'Visual',         key: 'visual', width: 30 },
+      { header: 'Kind',           key: 'kind',   width: 14 },
+      { header: 'Row (key)',      key: 'key',    width: 38 },
+      { header: 'Column',         key: 'column', width: 26 },
+      { header: 'Old report',     key: 'exp',    width: 16 },
+      { header: 'New report',     key: 'act',    width: 16 },
+      { header: 'Change',         key: 'delta',  width: 14 },
+      { header: 'Change %',       key: 'pct',    width: 10 },
+    ];
+    styleHeader(cWs, cWs.columns.length);
+    type Chg = { sheet: string; label: string; kind: string; key: string; column: string; e: string; a: string };
+    const chgs: Chg[] = [];
+    for (const { sheet, visual } of changedVisuals) {
+      const kind = classified.find(c => c.v === visual)?.bucket === 'expected' ? 'As expected' : 'Real';
+      for (const cr of visual.changedRows ?? []) for (const ch of cr.changes) {
+        chgs.push({ sheet, label: `${visual.title} [${visual.type}]`, kind, key: cr.key, column: ch.column, e: ch.expected, a: ch.actual });
+      }
+    }
+    const size = (c: Chg) => { const e = num(c.e), a = num(c.a); return e !== null && a !== null ? Math.abs(a - e) : -1; };
+    chgs.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === 'Real' ? -1 : 1) || size(y) - size(x));
+    for (const c of chgs) {
+      const e = num(c.e), a = num(c.a);
+      const row = cWs.addRow({ sheet: c.sheet, visual: c.label, kind: c.kind, key: c.key, column: c.column, exp: e ?? c.e, act: a ?? c.a });
+      row.eachCell(cell => { cell.border = E_CB; cell.alignment = { vertical: 'middle' }; });
+      const pctText = c.e.trim().endsWith('%') && c.a.trim().endsWith('%');
+      row.getCell('exp').fill = E_MISS;
+      row.getCell('act').fill = c.kind === 'Real' ? E_FAIL_LT : E_INFO_LT;
+      row.getCell('act').font = { bold: true };
+      if (e !== null && a !== null) {
+        const fmt = pctText ? '#,##0.##"%"' : '#,##0.##';
+        row.getCell('exp').numFmt = fmt; row.getCell('act').numFmt = fmt;
+        row.getCell('delta').value = a - e;
+        row.getCell('delta').numFmt = pctText ? '+0.##" pp";-0.##" pp";0' : '+#,##0.##;-#,##0.##;0';
+        if (e !== 0) { row.getCell('pct').value = (a - e) / Math.abs(e); row.getCell('pct').numFmt = '+0.0%;-0.0%;0.0%'; }
+        else row.getCell('pct').value = 'n/a';
+      } else {
+        row.getCell('delta').value = 'text';
+      }
+      row.getCell('delta').alignment = { horizontal: 'right', vertical: 'middle' };
+      row.getCell('pct').alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+  }
+
+  // ── Sheet 5: Filters Applied ──────────────────────────────────────────────
+  writeFiltersSheet(wb, meta);
+
+  // ── Sheet 6: Run details — IDs, files, counts, mapping ────────────────────
+  {
+    const rWs = wb.addWorksheet('Run details');
+    rWs.columns = [{ width: 44 }, { width: 80 }];
+    const rows: [string, string][] = [
+      ['Pair',                meta.pairName],
+      ['Run Mode',            meta.mode],
+      // Pinned locale + named month so the summary reads the same wherever it was generated.
+      ['Run Time',            new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' })],
+      [`Old report (${meta.sourceLabel})`, meta.sourceReportId],
+      [`New report (${meta.targetLabel})`, meta.targetReportId],
+      ['Old report file',     meta.expectedFile],
+      ['New report file',     meta.actualFile],
+      ['Pages compared',      String(comparedPages.length)],
+      ['Pages fully identical (strict)', String(diff.sheets.filter(s => s.identical).length)],
+      ['Pages with only header-text/order differences', String(diff.sheets.filter(s => !s.identical && s.dataIdentical).length)],
+      ['Pages with data/structure differences', String(differing)],
+      ['Pages only in old report', diff.sheetsOnlyInExpected.join(', ') || '(none)'],
+      ['Pages only in new report', diff.sheetsOnlyInActual.join(', ') || '(none)'],
+      ['Visuals with only a header-text difference', String(totalHeaderDiffs)],
+      ['Visuals missing / duplicated / ambiguous', String(totalStructuralDiffs)],
+      ['Header diffs count as failure?', TREAT_HEADER_DIFF_AS_FAILURE ? 'Yes' : 'No — see TREAT_HEADER_DIFF_AS_FAILURE'],
+    ];
+    if (meta.mappingFile) {
+      rows.push(['Mapping file', meta.mappingFile]);
+      const byType = new Map<string, number>();
+      for (const sh of diff.sheets) for (const v of sh.visuals) {
+        if (v.mapping) byType.set(v.mapping.changeLabel, (byType.get(v.mapping.changeLabel) ?? 0) + 1);
+      }
+      for (const [label, n] of byType) rows.push([`  Mapped visuals — ${label}`, String(n)]);
+    }
+    if (meta.pageAlignment) {
+      rows.push(['Report pages in both reports', String(meta.pageAlignment.inBothCount)]);
+      rows.push(['Report pages only in old report', meta.pageAlignment.onlyInSource.join(', ') || '(none)']);
+      rows.push(['Report pages only in new report', meta.pageAlignment.onlyInTarget.join(', ') || '(none)']);
+    }
+    for (const [label, value] of rows) {
+      const r = rWs.addRow([label, value]);
+      r.getCell(1).font = { bold: true }; r.getCell(1).fill = E_INFO;
+      r.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle', wrapText: true }; });
+    }
+  }
+
 
   const SHOW = 50; // rows shown per kind per visual; the full list is on "Changed Values"
   const colsOf = (v: VisualBlockDiff): string[] =>
@@ -1420,54 +1394,117 @@ export async function writeParitySummary(
     dWs.views = [{ state: 'frozen', ySplit: 0, showGridLines: false }];
   }
 
-  // ── Sheet 5: Changed Values — flat, filterable list of every changed cell ─
-  const changedVisuals = problemVisuals.filter(({ visual }) => (visual.changedRows?.length ?? 0) > 0);
-  if (changedVisuals.length > 0) {
-    const cWs = wb.addWorksheet('Changed Values');
-    cWs.columns = [
-      { header: 'Page (Sheet)',   key: 'sheet',  width: 22 },
-      { header: 'Visual',         key: 'visual', width: 30 },
-      { header: 'Row (key)',      key: 'key',    width: 38 },
-      { header: 'Column',         key: 'column', width: 26 },
-      { header: 'Original value', key: 'exp',    width: 16 },
-      { header: 'Changed value',  key: 'act',    width: 16 },
-      { header: 'Change (Δ)',     key: 'delta',  width: 12 },
-      { header: 'Change %',       key: 'pct',    width: 10 },
-    ];
-    styleHeader(cWs, cWs.columns.length);
-    for (const { sheet, visual } of changedVisuals) {
-      const label = `${visual.title} [${visual.type}]`;
-      for (const cr of visual.changedRows ?? []) {
-        for (const ch of cr.changes) {
-          const e = num(ch.expected), a = num(ch.actual);
-          const row = cWs.addRow({ sheet, visual: label, key: cr.key, column: ch.column, exp: ch.expected, act: ch.actual });
-          row.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle' }; });
-          row.getCell('exp').fill = E_MISS;
-          row.getCell('act').fill = E_FAIL_LT;
-          row.getCell('act').font = { bold: true };
-          if (e !== null && a !== null) {
-            row.getCell('delta').value = a - e;
-            row.getCell('delta').numFmt = (ch.expected.trim().endsWith('%') && ch.actual.trim().endsWith('%')) ? '+0.##" pp";-0.##" pp";0' : '+0.##;-0.##;0';
-            if (e !== 0) { row.getCell('pct').value = (a - e) / Math.abs(e); row.getCell('pct').numFmt = '+0.0%;-0.0%;0.0%'; }
-            else row.getCell('pct').value = 'n/a';
-          } else {
-            row.getCell('delta').value = 'text';
-          }
-          row.getCell('delta').alignment = { horizontal: 'right', vertical: 'middle' };
-          row.getCell('pct').alignment = { horizontal: 'right', vertical: 'middle' };
-        }
+  // ── Sheet 1: At a glance (filled last, now that every row number is known) ─
+  {
+    glanceWs.columns = [{ width: 30 }, { width: 36 }, { width: 36 }, { width: 8 }, { width: 8 }, { width: 8 }, { width: 8 }, { width: 8 }, { width: 46 }];
+    const COLS = 9;
+    const gLine = (text: string, opts: { fill?: ExcelJS.Fill; bold?: boolean; size?: number; height?: number; color?: string; italic?: boolean } = {}) => {
+      const r = glanceWs.addRow([text]);
+      glanceWs.mergeCells(r.number, 1, r.number, COLS);
+      const c = r.getCell(1);
+      c.alignment = { vertical: 'middle', wrapText: true };
+      if (opts.fill) c.fill = opts.fill;
+      c.font = { bold: !!opts.bold, italic: !!opts.italic, size: opts.size, color: opts.color ? { argb: opts.color } : undefined };
+      if (opts.height) r.height = opts.height;
+      return r;
+    };
+    const gKV = (label: string, value: string, fill?: ExcelJS.Fill, height?: number) => {
+      const r = glanceWs.addRow([label, value]);
+      glanceWs.mergeCells(r.number, 2, r.number, COLS);
+      r.getCell(1).font = { bold: true }; r.getCell(1).fill = E_INFO;
+      r.getCell(1).border = E_CB; r.getCell(2).border = E_CB;
+      r.getCell(1).alignment = { vertical: 'middle', wrapText: true };
+      r.getCell(2).alignment = { vertical: 'middle', wrapText: true };
+      if (fill) r.getCell(2).fill = fill;
+      if (height) r.height = height;
+      return r;
+    };
+    const gHead = (text: string) => gLine(text, { fill: E_HDR, bold: true, size: 12, color: 'FFFFFFFF', height: 22 });
+
+    gLine(verdict, { fill: verdictFill, bold: true, size: 16, height: 38, color: verdictDark ? 'FFFFFFFF' : 'FF000000' }).getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    glanceWs.addRow([]);
+
+    // Were the same filters used?
+    gHead('Were the same filters used on both reports?');
+    gKV('Same filters?',
+      sameFilters.answer === 'YES' ? '✅ YES' : sameFilters.answer === 'NO' ? '❌ NO' : '❓ Not confirmed',
+      sameFilters.answer === 'YES' ? E_PASS_LT : sameFilters.answer === 'NO' ? E_FAIL_LT : E_WARN_LT);
+    gKV('', sameFilters.detail, undefined, 32);
+    glanceWs.addRow([]);
+
+    // Reasons the data can differ even with the same filters
+    if (facts.length > 0 || capped.length > 0) {
+      gHead('Expected reasons for differences');
+      for (const f of facts) gKV(f.label, `Old report: ${f.oldValue}     →     New report: ${f.newValue}`, E_INFO_LT);
+      if (capped.length > 0) {
+        gKV('Export row limit hit', `${capped.length} visual(s) exported ${EXPORT_ROW_CAP.toLocaleString('en-US')} rows, the most Power BI will export, so their lists may be cut off at different places: ${capped.slice(0, 5).join('; ')}${capped.length > 5 ? '; …' : ''}`, E_WARN_LT, 44);
       }
+      glanceWs.addRow([]);
     }
+
+    // Tally
+    gHead(`Visuals compared: ${classified.length}`);
+    for (const b of BUCKET_ORDER) {
+      const r = glanceWs.addRow([`${BUCKET_ICON[b]}  ${counts[b]}`, BUCKET_MEANING[b]]);
+      glanceWs.mergeCells(r.number, 2, r.number, COLS);
+      r.getCell(1).font = { bold: true, size: 12 }; r.getCell(1).fill = bucketFill[b];
+      r.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'middle', wrapText: true }; });
+      r.height = 22;
+    }
+    glanceWs.addRow([]);
+
+    // Caveats / notes
+    if (caveats.length > 0 || (meta.notes ?? []).length > 0) {
+      gHead(caveats.length > 0 ? 'Before you trust this' : 'Notes');
+      caveats.forEach(c => gKV('⚠ Problem', c, E_WARN_LT, 44));
+      (meta.notes ?? []).forEach(n => gKV('ℹ Note', n, E_INFO_LT, 44));
+      glanceWs.addRow([]);
+    }
+
+    // Per-page table
+    gHead('Page by page');
+    const ph = glanceWs.addRow(['Page', 'Filters — old report', 'Filters — new report', '✅', '❌', 'ℹ️', '⚪', '🔍', 'Look at this first']);
+    ph.eachCell(c => { c.fill = E_HDR; c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.border = E_CB; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
+    const perPage = diff.sheets.map(sh => {
+      const mine = classified.filter(c => c.sheet === sh.sheet);
+      return { sh, mine, t: tally(mine) };
+    }).sort((x, y) => (y.t.real - x.t.real) || (y.t.eye - x.t.eye));
+    for (const { sh, mine, t } of perPage) {
+      let look = '';
+      if (sh.inExpected && !sh.inActual) look = 'Page is only in the old report';
+      else if (!sh.inExpected && sh.inActual) look = 'Page is only in the new report';
+      else if (t.real > 0) look = mine.filter(c => c.bucket === 'real').sort((x, y) => bigNum(y) - bigNum(x))[0].v.title;
+      else if (t.eye > 0) look = `(check by eye) ${mine.find(c => c.bucket === 'eye')!.v.title}`;
+      const fast = mine.length === 0 && sh.identical;
+      const r = glanceWs.addRow([
+        sh.sheet, pageFilterText(filterRecs, sh.sheet, true), pageFilterText(filterRecs, sh.sheet, false),
+        fast ? 'all' : t.match, t.real, t.expected, t.na, t.eye, look,
+      ]);
+      r.eachCell(c => { c.border = E_CB; c.alignment = { vertical: 'top', wrapText: true }; });
+      for (let i = 4; i <= 8; i++) r.getCell(i).alignment = { horizontal: 'center', vertical: 'top' };
+      if (t.real > 0) r.getCell(5).fill = E_FAIL_LT;
+      if (t.eye > 0) r.getCell(8).fill = E_WARN_LT;
+      const lr = firstVisRowOfPage.get(sh.sheet);
+      if (lr !== undefined) link(r.getCell(1), sh.sheet, 'All visuals', lr);
+    }
+    glanceWs.addRow([]);
+    gHead('Where to look next');
+    gKV('What differs', 'Only the real differences, with the 3 biggest changes.');
+    gKV('All visuals', 'Every visual, worst first. The last-but-one column says why a visual came back empty.');
+    gKV('Changed values', 'Every changed number: old value, new value, change and % change.');
+    gKV('Filters Applied', 'Which filters and slicers were found, cleared, applied and really active on each report.');
+    gKV('Run details', 'Report IDs, files, page and mapping counts.');
+    glanceWs.views = [{ state: 'normal', showGridLines: false }];
   }
 
   // ── Hyperlinks (set last, once every target row number is known) ──────────
-  for (const [pageName, cell] of pageCells) {
-    const r = firstVisRowOfPage.get(pageName);
-    if (r !== undefined) link(cell, pageName, 'Visual Comparison', r);
-  }
-  for (const [v, row] of visCells) {
+  for (const [v, row] of visRows) {
     const d = detailFirstRow.get(v);
     if (d) link(row.getCell('details'), 'See differences →', d.sheetName, d.row);
+  }
+  for (const [v, row] of whatRows) {
+    const d = detailFirstRow.get(v);
+    if (d) link(row.getCell(8), 'See differences →', d.sheetName, d.row);
   }
 
   wb.eachSheet(ws => { ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }; });

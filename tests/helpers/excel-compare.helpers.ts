@@ -247,6 +247,12 @@ export type VisualDiffStatus =
                         // visual was dropped on purpose. Listed, never a failure.
 
 export interface VisualBlockDiff {
+  /** Mapping-file mode: this visual exported nothing on BOTH sides (so there
+   *  was nothing to compare). Not a difference, but also not a real "match". */
+  emptyBoth?:     boolean;
+  /** Plain-words reason(s) the old/new visual exported nothing, when known. */
+  emptyReasonOld?: string;
+  emptyReasonNew?: string;
   title:          string;
   type:           string;
   status:         VisualDiffStatus;

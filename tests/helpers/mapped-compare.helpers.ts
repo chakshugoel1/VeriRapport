@@ -53,12 +53,15 @@ interface Side {
   sheetByPageId: Map<string, string>; // internal page id -> sheetName
   sheetByPageName: Map<string, string>;
   problems: string[];
+  /** pageId|visualId -> why that visual exported nothing (from the index). */
+  notExported: Map<string, string>;
 }
 
 async function loadSide(xlsxPath: string, label: string): Promise<Side> {
   const side: Side = {
     refs: [], byPageVisual: new Map(), byVisual: new Map(), sheetRows: new Map(),
     sheetByPageId: new Map(), sheetByPageName: new Map(), problems: [],
+    notExported: new Map(),
   };
   const indexPath = visualIndexPathFor(xlsxPath);
   if (!fs.existsSync(indexPath)) {
@@ -73,6 +76,10 @@ async function loadSide(xlsxPath: string, label: string): Promise<Side> {
   const sheetNames = new Map([...blocksBySheet.keys()].map(n => [sheetKey(n), n]));
 
   for (const sh of index.sheets) {
+    for (const ne of sh.notExported ?? []) {
+      side.notExported.set(`${sh.pageInternalName}|${ne.visualName}`, ne.reason);
+      if (!side.notExported.has(`|${ne.visualName}`)) side.notExported.set(`|${ne.visualName}`, ne.reason);
+    }
     const real = sheetNames.get(sheetKey(sh.sheetName));
     const blocks = real ? blocksBySheet.get(real)! : undefined;
     if (!blocks) { side.problems.push(`${label}: sheet "${sh.sheetName}" is in the index but not in ${path.basename(xlsxPath)}.`); continue; }
@@ -102,6 +109,11 @@ async function loadSide(xlsxPath: string, label: string): Promise<Side> {
 }
 
 /** Finds a visual by page id + visual id, falling back to a visual id that is unique in the report. */
+function reasonFor(side: Side, pageId: string, visualId: string): string | undefined {
+  if (!visualId) return undefined;
+  return side.notExported.get(`${pageId}|${visualId}`) ?? side.notExported.get(`|${visualId}`);
+}
+
 function lookup(side: Side, pageId: string, visualId: string): BlockRef | undefined {
   if (!visualId) return undefined;
   const exact = side.byPageVisual.get(`${pageId}|${visualId}`);
@@ -366,6 +378,7 @@ export async function compareWorkbooksWithMapping(
       // Nothing exported on either side (e.g. a visual with no data). Not a difference.
       d = emptyDiff(title, type);
       d.countExpected = 0; d.countActual = 0;
+      d.emptyBoth = true;
       d.note = 'No data was exported for this visual on either side, so there is nothing to compare.';
     } else if (oldRef && !newRef) {
       d = emptyDiff(title, type);
@@ -390,6 +403,10 @@ export async function compareWorkbooksWithMapping(
         { oldFields: row.oldFields, newFields: row.newFields });
       d.title = title; d.type = type;
     }
+    if (!oldRef) d.emptyReasonOld = reasonFor(old, row.oldPageId, row.oldVisualId)
+      ?? (row.oldVisualId ? 'Not in the export (hidden, pop-up, or the page was not exported)' : undefined);
+    if (!newRef && row.newVisualId) d.emptyReasonNew = reasonFor(nw, row.newPageId, row.newVisualId)
+      ?? 'Not in the export (hidden, pop-up, or the page was not exported)';
     push(sheet, withMapping(d, row));
   }
 

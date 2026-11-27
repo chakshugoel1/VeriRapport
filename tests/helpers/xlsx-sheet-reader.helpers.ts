@@ -71,6 +71,14 @@ const NUMERIC_ROUND_DECIMALS = 4;
  * via one path could compare unequal to the same value read via the other.
  */
 export function normalizeNumericDrift(text: string): string {
+  // A percentage written two ways ("100%" vs "100.0%") is the same value.
+  const pct = /^(-?\d+(?:\.\d+)?)%$/.exec(text);
+  if (pct) {
+    const n = Number(pct[1]);
+    if (!Number.isFinite(n)) return text;
+    const r = n.toFixed(NUMERIC_ROUND_DECIMALS).replace(/0+$/, '').replace(/\.$/, '');
+    return (r === '-0' ? '0' : r) + '%';
+  }
   if (!PLAIN_DECIMAL_RE.test(text)) return text;
   const n = Number(text);
   if (!Number.isFinite(n)) return text;

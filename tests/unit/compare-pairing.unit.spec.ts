@@ -220,12 +220,12 @@ test.describe('changed values', () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(out);
     const names = wb.worksheets.map(w => w.name);
-    expect(names).toContain('Changed Values');
+    expect(names).toContain('Changed values');
     expect(names).toContain('Differences');
-    const cv = wb.getWorksheet('Changed Values')!;
-    expect(String(cv.getRow(2).getCell(4).value)).toBe('Sales');
-    expect(String(cv.getRow(2).getCell(5).value)).toBe('20');
-    expect(String(cv.getRow(2).getCell(6).value)).toBe('21');
+    const cv = wb.getWorksheet('Changed values')!;
+    expect(String(cv.getRow(2).getCell(5).value)).toBe('Sales');
+    expect(String(cv.getRow(2).getCell(6).value)).toBe('20');
+    expect(String(cv.getRow(2).getCell(7).value)).toBe('21');
     const df = wb.getWorksheet('Differences')!;
     const rows = df.getRows(1, df.rowCount)!.map(r => [1, 2, 3].map(c => String(r.getCell(c).value ?? '')));
     // Changed row: Original / Changed lines, then the Difference line with +1.

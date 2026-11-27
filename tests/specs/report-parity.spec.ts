@@ -685,7 +685,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         (cs.reportFilters + cs.pageFilters + cs.slicers === 0
           ? `${label}: no saved filters or slicer selections were found.`
           : `${label}: cleared ${cs.reportFilters} report-level filter(s), ${cs.pageFilters} page-level filter(s) and ${cs.slicers} slicer selection(s) on ${cs.pages.size} page(s).`);
-      runNotes.push(`Saved filters were cleared before export (${sc === UNFILTERED ? 'no filters were picked, so both reports show their full data' : 'only the filters picked in the app were then applied'}). ` +
+      runNotes.push(`Saved filters were cleared before export (${sc === UNFILTERED ? 'no filters were picked in the app, so apart from the slicers listed as "Kept" on the Filters Applied sheet the reports show their full data' : 'then only the filters picked in the app were applied; slicers listed as "Kept" on the Filters Applied sheet need a value and stay as saved'}). ` +
         `${describe('Source', srcClear, runSource)} ${describe('Target', tgtClear, runTarget)}`);
       runNotes.push('Not cleared: visual-level filters (part of a KPI\'s own definition) and row-level security (RLS), which always applies to the signed-in user.');
     } else {
