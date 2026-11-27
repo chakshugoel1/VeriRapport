@@ -59,7 +59,8 @@ import {
   getForPageCI,
   type SlicerScenario,
 } from '../helpers/slicer-config.helpers';
-import { setSlicerSelection, setGlobalFieldFilters, clearGlobalFilters, setPageFieldFilters, clearReportPreapplied, clearPagePreapplied } from '../helpers/harness.helpers';
+import { setSlicerSelection, setGlobalFieldFilters, clearGlobalFilters, setPageFieldFilters, clearReportPreapplied, clearPagePreapplied, readActiveFilters, readReportFilters } from '../helpers/harness.helpers';
+import type { FilterRecord } from '../helpers/report-export.helpers';
 
 const SOURCE_LABEL = 'Import mode';
 const TARGET_LABEL = 'Direct Lake';
@@ -380,26 +381,45 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
   // security are not touched. PBI_KEEP_PREAPPLIED_FILTERS=1 restores the old
   // behaviour (export the reports as saved).
   const CLEAR_PREAPPLIED = (process.env['PBI_KEEP_PREAPPLIED_FILTERS'] ?? '').trim() !== '1';
-  type ClearStats = { reportFilters: number; pageFilters: number; slicers: number; pages: Set<string>; issues: FilterIssue[] };
-  const newClearStats = (): ClearStats => ({ reportFilters: 0, pageFilters: 0, slicers: 0, pages: new Set(), issues: [] });
+  // `records` feeds the "Filters Applied" sheet of the summary. PBI_SKIP_FILTER_READBACK=1
+  // turns off the extra read-back of the active filters (one cheap query per page).
+  const READBACK = (process.env['PBI_SKIP_FILTER_READBACK'] ?? '').trim() !== '1';
+  type ClearStats = { reportFilters: number; pageFilters: number; slicers: number; pages: Set<string>; issues: FilterIssue[]; records: FilterRecord[] };
+  const newClearStats = (): ClearStats => ({ reportFilters: 0, pageFilters: 0, slicers: 0, pages: new Set(), issues: [], records: [] });
+  const SIDE_LABEL = { source: 'Source (old report)', target: 'Target (new report)' } as const;
+  const CLEARED = 'Cleared (was saved in the report)';
+  const ACTIVE  = 'Active after applying (read-back)';
 
   const makeHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target', clear: ClearStats) => {
-    const inner = makeScenarioHooks(sc, filterIssues, side);
+    const inner = makeScenarioHooks(sc, filterIssues, side, clear.records);
     if (!CLEAR_PREAPPLIED) return inner;
+    const report = SIDE_LABEL[side];
     return {
       beforeExport: async (p: import('@playwright/test').Page): Promise<void> => {
         try {
+          // Read what is saved BEFORE clearing, so the summary can name it.
+          const saved = await readReportFilters(p).catch(() => []);
           clear.reportFilters += await clearReportPreapplied(p);
+          for (const f of saved) clear.records.push({ report, page: 'All pages', level: 'Report', field: f.field, values: f.values, what: CLEARED });
         } catch (e) {
           clear.issues.push({ page: '(all pages)', error: `report-level filters: ${(e as Error).message}` });
         }
         if (inner.beforeExport) await inner.beforeExport(p);
+        if (READBACK) {
+          try {
+            const now = await readReportFilters(p);
+            for (const f of now) clear.records.push({ report, page: 'All pages', level: 'Report', field: f.field, values: f.values, what: ACTIVE });
+            if (now.length === 0) clear.records.push({ report, page: 'All pages', level: 'Report', field: '(no report-level filter active)', values: [], what: ACTIVE });
+          } catch { /* read-back is informational only */ }
+        }
       },
       perPageHook: async (p: import('@playwright/test').Page, pageDisplayName: string): Promise<void> => {
         try {
           const r = await clearPagePreapplied(p);
           clear.pageFilters += r.pageFiltersCleared;
           clear.slicers += r.slicersCleared.length;
+          for (const f of r.pageFilterDetails ?? []) clear.records.push({ report, page: pageDisplayName, level: 'Page', field: f.field, values: f.values, what: CLEARED });
+          for (const s of r.slicerDetails ?? []) clear.records.push({ report, page: pageDisplayName, level: 'Slicer', field: s.field ? `${s.title} (${s.field})` : s.title, values: s.values, what: CLEARED });
           if (r.pageFiltersCleared > 0 || r.slicersCleared.length > 0) {
             clear.pages.add(pageDisplayName);
             console.log(`      · cleared pre-applied filters on "${pageDisplayName}": ${r.pageFiltersCleared} page filter(s)` +
@@ -409,12 +429,27 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         } catch (e) {
           clear.issues.push({ page: pageDisplayName, error: (e as Error).message });
         }
-        if (inner.perPageHook) await inner.perPageHook(p, pageDisplayName);
+        try {
+          if (inner.perPageHook) await inner.perPageHook(p, pageDisplayName);
+        } finally {
+          if (READBACK) {
+            try {
+              const now = await readActiveFilters(p);
+              for (const f of now.pageFilters) clear.records.push({ report, page: pageDisplayName, level: 'Page', field: f.field, values: f.values, what: ACTIVE });
+              for (const s of now.slicers) clear.records.push({ report, page: pageDisplayName, level: 'Slicer', field: s.field ? `${s.title} (${s.field})` : s.title, values: s.values, what: ACTIVE });
+              if (now.pageFilters.length === 0 && now.slicers.length === 0) {
+                clear.records.push({ report, page: pageDisplayName, level: 'Page', field: '(no page filter or slicer selection active)', values: [], what: ACTIVE });
+              }
+            } catch { /* read-back is informational only */ }
+          }
+        }
       },
     };
   };
 
-  const makeScenarioHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target') => {
+  const makeScenarioHooks = (sc: ScenarioOrNone, filterIssues: FilterIssue[], side: 'source' | 'target', records?: FilterRecord[]) => {
+    const APPLIED = 'Applied by you';
+    const sideLabel = SIDE_LABEL[side];
     if (sc === UNFILTERED) return { beforeExport: undefined, perPageHook: undefined };
 
     // A selection tagged `side: 'source'` or `side: 'target'` (set by the
@@ -446,6 +481,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
       const specs = plan.global.map(g => ({ target: g.targets[0], values: g.values }));
       const labelFor = (g: typeof plan.global[number]) => g.targets.map(t => `${t.table}.${t.column}`).join('+');
       console.log(`      · GLOBAL filters (all pages): ${plan.global.map(g => `${labelFor(g)}=[${g.values.join(', ')}]`).join('; ')}`);
+      for (const g of plan.global) records?.push({ report: sideLabel, page: 'All pages', level: 'Report', field: labelFor(g), values: g.values, what: APPLIED });
       try {
         await setGlobalFieldFilters(p, specs);
       } catch (e) {
@@ -491,6 +527,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
 
       for (const sel of visualBased) {
         console.log(`      · "${sel.title ?? sel.visualName}" → [${sel.values.join(', ')}]`);
+        records?.push({ report: sideLabel, page: pageDisplayName, level: 'Slicer', field: `${sel.title ?? sel.visualName}${sel.targets?.length ? ' (' + sel.targets.map(t => `${t.table}.${t.column}`).join(' + ') + ')' : ''}`, values: sel.values, what: APPLIED });
         // Passing isHierarchy/targets explicitly — confirmed in practice that
         // a fresh live getSlicerState() query can report a different target
         // count for the exact same visual between separate embed sessions,
@@ -501,6 +538,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
 
       if (fieldBased.length > 0) {
         console.log(`      · fields on "${pageDisplayName}": ${fieldBased.map(s => `${s.title ?? '(field)'}=[${s.values.join(', ')}]`).join('; ')}`);
+        for (const s of fieldBased) records?.push({ report: sideLabel, page: pageDisplayName, level: 'Page', field: s.targets!.map(t => `${t.table}.${t.column}`).join(' + '), values: s.values, what: APPLIED });
         // This is what lets a field discovered on ONE page apply cleanly to
         // OTHER pages that may not have their own visible slicer for it.
         await setPageFieldFilters(p, fieldBased.map(s => ({ target: s.targets![0], values: s.values })));
@@ -709,6 +747,7 @@ test('Report Parity — Import mode vs Direct Lake data validation', async ({ pa
         pageAlignment,
         mappingFile: MAPPING ? path.basename(MAPPING.filePath) : undefined,
         notes: runNotes,
+        filterRecords: [...srcClear.records, ...tgtClear.records],
       },
       P.summary,
     ));

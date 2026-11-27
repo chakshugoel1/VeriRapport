@@ -528,6 +528,23 @@ export function writeVisualsToSheet(
 
 // ── Parity summary writer ─────────────────────────────────────────────────────
 
+/**
+ * One row of the "Filters Applied" sheet: a filter or slicer that was found,
+ * cleared, applied or read back on one report.
+ */
+export interface FilterRecord {
+  /** 'Source (old report)' or 'Target (new report)'. */
+  report: string;
+  /** Page name, or 'All pages' for report-level filters. */
+  page:   string;
+  level:  'Report' | 'Page' | 'Slicer';
+  /** Field as "Table.Column" (and the slicer's title when it has one). */
+  field:  string;
+  values: string[];
+  /** 'Cleared (was saved in the report)' | 'Applied by you' | 'Active after applying (read-back)' */
+  what:   string;
+}
+
 export interface ParitySummaryMeta {
   pairName:     string;
   mode:         string;
@@ -547,6 +564,8 @@ export interface ParitySummaryMeta {
   comparisonCaveats?: string[];
   /** Plain information lines shown on the summary sheet (never change the verdict). */
   notes?: string[];
+  /** Rows for the "Filters Applied" sheet. Omit/empty → the sheet says nothing was recorded. */
+  filterRecords?: FilterRecord[];
   /** Mapping-file mode: path/name of the KPI mapping file that drove the comparison. */
   mappingFile?: string;
   /** Full page-set alignment between the two reports (informational). */
@@ -888,6 +907,49 @@ export function summarizeForUi(
  * still written out — the relaxation only affects the verdict, never what's
  * shown.
  */
+export function writeFiltersSheet(wb: ExcelJS.Workbook, meta: ParitySummaryMeta): void {
+  const ws = wb.addWorksheet('Filters Applied');
+  ws.columns = [{ width: 22 }, { width: 34 }, { width: 10 }, { width: 46 }, { width: 50 }, { width: 36 }];
+  const recs = meta.filterRecords ?? [];
+  const put = (cells: string[], fill?: ExcelJS.Fill, bold = false) => {
+    const r = ws.addRow(cells);
+    r.eachCell({ includeEmpty: true }, c => {
+      c.alignment = { vertical: 'top', wrapText: true }; c.border = E_CB;
+      if (fill) c.fill = fill;
+      if (bold) c.font = { bold: true };
+    });
+    return r;
+  };
+  const line = (text: string, fill?: ExcelJS.Fill, bold = false) => {
+    const r = ws.addRow([text]);
+    ws.mergeCells(r.number, 1, r.number, 6);
+    r.getCell(1).alignment = { vertical: 'top', wrapText: true };
+    if (fill) r.getCell(1).fill = fill;
+    if (bold) r.getCell(1).font = { bold: true };
+  };
+  line('Filters and slicers on each report when this comparison was made', E_INFO, true);
+  line('Cleared = a filter saved in the report that the tool removed before exporting. Applied by you = a filter you picked in the app. ' +
+       'Active after applying = what the report itself says is active after that (read back from Power BI). Where a field has a different name in the ' +
+       'new report, each report shows its own field name on its own rows.');
+  line(`Run mode: ${meta.mode}.  Source = ${meta.sourceLabel}, Target = ${meta.targetLabel}.`);
+  ws.addRow([]);
+  if (recs.length === 0) {
+    line('Nothing was recorded for this run (for example the report was exported as saved, or the filter read-back was switched off).', E_WARN_LT);
+  } else {
+    const hdr = put(['Report', 'Page', 'Level', 'Field', 'Value(s)', 'What happened'], E_HDR, true);
+    hdr.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; });
+    for (const rec of recs) {
+      const fill = rec.what.startsWith('Cleared') ? E_WARN_LT : rec.what.startsWith('Applied') ? E_INFO_LT : E_PASS_LT;
+      put([rec.report, rec.page, rec.level, rec.field, rec.values.length ? rec.values.join(', ') : '', rec.what], fill);
+    }
+  }
+  ws.addRow([]);
+  line('Kept (cannot be cleared by this tool)', E_INFO, true);
+  line('• Visual-level filters: part of a visual\'s own definition, so they apply the same way in both reports.');
+  line('• Row-level security (RLS): always applies to the signed-in user, so both reports are seen as the same user.');
+  ws.views = [{ state: 'frozen', ySplit: 0 }];
+}
+
 export async function writeParitySummary(
   diff: WorkbookDiffSummary,
   meta: ParitySummaryMeta,
@@ -1052,6 +1114,11 @@ export async function writeParitySummary(
   const pageRank = (sh: typeof diff.sheets[number]) =>
     (!sh.inExpected || !sh.inActual) ? 0 : !sh.dataIdentical ? 1 : !sh.identical ? 2 : 3;
   const pagesOrdered = diff.sheets.slice().sort((x, y) => pageRank(x) - pageRank(y));
+
+  // ── Sheet: Filters Applied ────────────────────────────────────────────────
+  // Which filters/slicers were found, cleared, applied and really active on
+  // each report when this comparison ran.
+  writeFiltersSheet(wb, meta);
 
   const cmpWs = wb.addWorksheet('Page Comparison');
   cmpWs.columns = [

@@ -623,11 +623,44 @@ export async function setPageFieldFilters(page: Page, specs: Array<{ target: Sli
 
 // ── Pre-applied filter clearing ("no-filter baseline") ──────────────────────
 
+/** One filter in plain text: field ("Table.Column") and its values. */
+export interface FilterDetail { field: string; values: string[] }
+/** One slicer with a selection: its title, field(s) and selected values. */
+export interface SlicerDetail { title: string; field: string; values: string[] }
+
 export interface PreappliedClearResult {
   page: string;
   pageFiltersCleared: number;
   slicersCleared: string[];
   errors: string[];
+  /** What the cleared page-level filters were (field + values). Optional: older harness pages don't send it. */
+  pageFilterDetails?: FilterDetail[];
+  /** What the cleared slicer selections were (title, field, values). */
+  slicerDetails?: SlicerDetail[];
+}
+
+export interface ActiveFiltersResult {
+  page: string;
+  pageFilters: FilterDetail[];
+  slicers: SlicerDetail[];
+  errors: string[];
+}
+
+/**
+ * Read-back of the filters that are REALLY active on the current page right
+ * now (page-level filters + slicers with a selection). Read-only.
+ */
+export async function readActiveFilters(page: Page): Promise<ActiveFiltersResult> {
+  return page.evaluate((): Promise<ActiveFiltersResult> => (window as any).__readActiveFilters());
+}
+
+/** Report-level filters ("Filters on all pages") in plain text, via report.getFilters(). Read-only. */
+export async function readReportFilters(page: Page): Promise<FilterDetail[]> {
+  const raw = await getGlobalFilters(page);
+  return raw.map(f => ({
+    field: f.target ? (('column' in f.target && (f.target as any).column) ? `${(f.target as any).table}.${(f.target as any).column}` : JSON.stringify(f.target)) : '(unknown field)',
+    values: (f.values ?? []).map(String),
+  }));
 }
 
 /** Clears report-level filters ("Filters on all pages"). Returns how many there were. */

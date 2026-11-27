@@ -426,13 +426,46 @@
     // user selection. Row-level security cannot be removed from here.
     // Each step is tried independently; failures are reported, not thrown, so
     // the caller can record exactly what could not be cleared.
+    // Plain-text helpers so the Parity Summary can say WHICH filters were
+    // cleared / are active (field name + values), not only how many.
+    function describeTarget(t) {
+      if (!t) return '(unknown field)';
+      if (t.column) return t.table + '.' + t.column;
+      if (t.hierarchy) return t.table + '.' + t.hierarchy + (t.hierarchyLevel ? '.' + t.hierarchyLevel : '');
+      if (t.measure) return t.table + '.' + t.measure + ' (measure)';
+      try { return JSON.stringify(t); } catch (_e) { return '(unknown field)'; }
+    }
+    function describeFilter(f) {
+      var values = [];
+      if (f && f.values && f.values.length) {
+        values = f.values.map(function(v) { return String(v); });
+      } else if (f && f.conditions && f.conditions.length) {
+        values = f.conditions.map(function(c) { return (c.operator || '') + ' ' + (c.value === undefined ? '' : c.value); });
+      } else if (f && f.operator) {
+        values = [String(f.operator)];
+      }
+      return { field: describeTarget(f && f.target), values: values };
+    }
+    function describeSlicerState(v, state) {
+      var filters = (state && state.filters) || [];
+      var fields = [];
+      var values = [];
+      filters.forEach(function(f) {
+        var d = describeFilter(f);
+        if (fields.indexOf(d.field) < 0) fields.push(d.field);
+        d.values.forEach(function(x) { values.push(x); });
+      });
+      return { title: v.title || v.name, field: fields.join(' + '), values: values };
+    }
+
     window.__clearPagePreapplied = async function() {
       var pages  = await window.__report.getPages();
       var active = pages.find(function(p) { return p.isActive; }) || pages[0];
-      var out = { page: active.displayName, pageFiltersCleared: 0, slicersCleared: [], errors: [] };
+      var out = { page: active.displayName, pageFiltersCleared: 0, slicersCleared: [], errors: [], pageFilterDetails: [], slicerDetails: [] };
       try {
         var existing = await active.getFilters();
         out.pageFiltersCleared = (existing || []).length;
+        out.pageFilterDetails = (existing || []).map(describeFilter);
         if (out.pageFiltersCleared > 0) await active.setFilters([]);
       } catch (e) {
         out.errors.push('page filters: ' + ((e && e.message) ? e.message : String(e)));
@@ -448,9 +481,41 @@
           var state = await v.getSlicerState();
           var hasSelection = state && state.filters && state.filters.length > 0;
           if (hasSelection) {
+            out.slicerDetails.push(describeSlicerState(v, state));
             await v.setSlicerState({ filters: [] });
             out.slicersCleared.push(v.title || v.name);
           }
+        } catch (e) {
+          out.errors.push('slicer "' + (v.title || v.name) + '": ' + ((e && e.message) ? e.message : String(e)));
+        }
+      }
+      return out;
+    };
+
+    // Read-back: what filters are REALLY active on the ACTIVE page right now
+    // (page-level filters + every slicer that has a selection). Used after
+    // clearing/applying so the summary shows the real state, not the plan.
+    // Read-only: changes nothing.
+    window.__readActiveFilters = async function() {
+      var pages  = await window.__report.getPages();
+      var active = pages.find(function(p) { return p.isActive; }) || pages[0];
+      var out = { page: active.displayName, pageFilters: [], slicers: [], errors: [] };
+      try {
+        var existing = await active.getFilters();
+        out.pageFilters = (existing || []).map(describeFilter);
+      } catch (e) {
+        out.errors.push('page filters: ' + ((e && e.message) ? e.message : String(e)));
+      }
+      var visuals = [];
+      try { visuals = await active.getVisuals(); } catch (e) {
+        out.errors.push('list visuals: ' + ((e && e.message) ? e.message : String(e)));
+      }
+      var slicers = visuals.filter(function(v) { return v.type === 'slicer' || v.type === 'advancedSlicer'; });
+      for (var i = 0; i < slicers.length; i++) {
+        var v = slicers[i];
+        try {
+          var state = await v.getSlicerState();
+          if (state && state.filters && state.filters.length > 0) out.slicers.push(describeSlicerState(v, state));
         } catch (e) {
           out.errors.push('slicer "' + (v.title || v.name) + '": ' + ((e && e.message) ? e.message : String(e)));
         }
