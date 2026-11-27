@@ -182,6 +182,13 @@
       display: inline;
       cursor: pointer;
     }
+    .option-toggle .option-text { display: flex; flex-direction: column; gap: 2px; }
+    .option-toggle .option-title { font-size: 13px; color: var(--ink); }
+    .option-toggle .option-help { font-size: 11px; color: var(--muted); }
+    .row.row-wide { grid-template-columns: 150px 1fr; }
+    .mapping-note { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
+    button.outline { background: transparent; color: var(--accent-2); border: 1px solid var(--border); }
+    button.outline:hover:not(:disabled) { background: #f0f6f6; opacity: 1; }
     .option-toggle-lg {
       align-items: center;
     }
@@ -357,6 +364,7 @@
 
     /* ── Fields ────────────────────────────────────────────────────────── */
     .row { grid-template-columns: 105px 1fr; }
+    .row.row-wide { grid-template-columns: 150px 1fr; }
     input.invalid { border-color: var(--danger); background: #fffafa; }
     .hint { font-size: 11px; color: var(--danger); grid-column: 2; margin-top: -4px; }
     .side-head { display: flex; justify-content: space-between; align-items: baseline; }
@@ -401,6 +409,7 @@
     @media (max-width: 820px) {
       .grid { grid-template-columns: 1fr; }
       .row { grid-template-columns: 1fr; gap: var(--space-1); }
+      .row.row-wide { grid-template-columns: 1fr; }
       label { white-space: normal; }
       .split-columns { grid-template-columns: 1fr; }
     }
@@ -446,23 +455,29 @@
         </div>
       </div>
       <div class="fields">
-        <div class="row">
+        <div class="row row-wide">
           <div class="field-wrap"><label for="mappingFile">Mapping file (optional)</label></div>
           <div style="display:flex; gap:8px; align-items:center;">
             <input id="mappingFile" readonly style="flex:1" placeholder="Leave empty for a normal comparison. Choose a KPI mapping Excel file when the new report was redesigned." />
             <button type="button" class="secondary" id="btnPickMapping">Browse…</button>
-            <button type="button" class="secondary" id="btnClearMapping">Clear</button>
+            <button type="button" class="outline" id="btnClearMapping">Clear</button>
           </div>
-          <div class="note" id="mappingNote" style="display:none"></div>
         </div>
+        <div class="mapping-note" id="mappingNote" style="display:none"></div>
       </div>
       <div class="option-toggle">
         <input type="checkbox" id="lenientTextCompare" />
-        <label for="lenientTextCompare">Case-insensitive compare (may hide differences that are only upper/lower case or separators)</label>
+        <div class="option-text">
+          <label for="lenientTextCompare" class="option-title">Ignore upper/lower case</label>
+          <span class="option-help">May hide differences that are only upper/lower case or separators.</span>
+        </div>
       </div>
       <div class="option-toggle">
         <input type="checkbox" id="keepSavedFilters" />
-        <label for="keepSavedFilters">Keep the filters and slicer selections saved in the reports (off = clear them first, so only the filters you pick below are applied)</label>
+        <div class="option-text">
+          <label for="keepSavedFilters" class="option-title">Keep report's saved filters</label>
+          <span class="option-help">Off = clear the saved filters and slicers first, so only the filters you pick below are applied.</span>
+        </div>
       </div>
     </div>
 
